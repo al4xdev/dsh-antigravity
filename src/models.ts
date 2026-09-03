@@ -47,6 +47,9 @@ function descriptor(
 
 /** Reviewed descriptors; the account-visible catalog is always reconciled online before display. */
 export const maintainedModels: readonly Model<AntiGravityApi>[] = [
+  descriptor('gemini-3.8-flash-high', 'Gemini 3.8 Flash (High)', 'gemini', 'high'),
+  descriptor('gemini-3.8-flash-medium', 'Gemini 3.8 Flash (Medium)', 'gemini', 'medium'),
+  descriptor('gemini-3.8-flash-low', 'Gemini 3.8 Flash (Low)', 'gemini', 'low'),
   descriptor('gemini-3.7-flash-high', 'Gemini 3.7 Flash (High)', 'gemini', 'high'),
   descriptor('gemini-3.7-flash-medium', 'Gemini 3.7 Flash (Medium)', 'gemini', 'medium'),
   descriptor('gemini-3.7-flash-low', 'Gemini 3.7 Flash (Low)', 'gemini', 'low'),

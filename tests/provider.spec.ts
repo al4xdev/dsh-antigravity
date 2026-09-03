@@ -91,6 +91,7 @@ describe('Anti Gravity provider catalog', () => {
   })
 
   it('maintains reviewed descriptors for online catalog reconciliation', () => {
+    expect(maintainedModels.map(model => model.id)).toContain('gemini-3.8-flash-high')
     expect(maintainedModels.map(model => model.id)).toContain('gemini-3.7-flash-high')
     expect(maintainedModels.map(model => model.id)).toContain('claude-opus-4-6-thinking')
     expect(maintainedModels.map(model => model.id)).toContain('gpt-oss-120b-medium')
