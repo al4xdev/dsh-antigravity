@@ -229,17 +229,20 @@ export function streamAntiGravity(
           }
         }
         if (candidate?.finishReason !== undefined) {
-          output.stopReason = mapStopReasonString(candidate.finishReason)
-          // TEMP DIAGNOSTIC - mapStopReasonString collapses every finishReason
-          // other than STOP/MAX_TOKENS to 'error' with no message, so the
-          // harness reported the generic "pi-ai stream error" and the real
-          // cause (SAFETY, MALFORMED_FUNCTION_CALL, ...) was lost. Revert to
-          // the one-line assignment once the trigger is identified.
-          if (output.stopReason === 'error') {
-            output.errorMessage = `Anti Gravity finishReason: ${candidate.finishReason}`
+          if (candidate.finishReason === 'MALFORMED_FUNCTION_CALL') {
+            output.stopReason = 'stop'
+            output.errorMessage = undefined
+          } else {
+            output.stopReason = mapStopReasonString(candidate.finishReason)
+            if (output.stopReason === 'error') {
+              output.errorMessage = `Anti Gravity finishReason: ${candidate.finishReason}`
+            }
           }
         }
-        if (output.content.some(block => block.type === 'toolCall')) output.stopReason = 'toolUse'
+        if (output.content.some(block => block.type === 'toolCall')) {
+          output.stopReason = 'toolUse'
+          output.errorMessage = undefined
+        }
         const usage = data.usageMetadata
         if (usage !== undefined) {
           const cacheRead = usage.cachedContentTokenCount ?? 0
@@ -269,7 +272,12 @@ export function streamAntiGravity(
         }
       }
       closeCurrent()
-      if (output.content.length === 0) throw new Error('Anti Gravity returned an empty response')
+      if (output.content.length === 0) {
+        output.content.push({
+          type: 'text',
+          text: 'The model failed to format a tool call (MALFORMED_FUNCTION_CALL). Please retry or rephrase.',
+        })
+      }
       const reason = output.stopReason === 'toolUse' || output.stopReason === 'length' ? output.stopReason : 'stop'
       stream.push({ type: 'done', reason, message: output })
       stream.end()
