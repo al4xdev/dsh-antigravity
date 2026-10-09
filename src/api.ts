@@ -24,6 +24,7 @@ import {
   retainThoughtSignature,
 } from '@earendil-works/pi-ai/api/google-shared'
 import { antiGravityHeaders } from './auth.ts'
+import { getCurrentSystemPrompt, getCurrentTools, normalizeContext } from '@earendil-works/pi-ai/utils/transcript'
 import { ENDPOINTS } from './models.ts'
 import type { AntiGravityApi } from './models.ts'
 
@@ -37,7 +38,7 @@ interface ResponsePart {
 interface ResponseChunk {
   response?: {
     responseId?: string
-    candidates?: Array<{ content?: { parts?: ResponsePart[] }; finishReason?: string }>
+    candidates?: Array<{ content?: { parts?: ResponsePart[] }; finishReason?: string; finishMessage?: string }>
     usageMetadata?: {
       promptTokenCount?: number
       candidatesTokenCount?: number
@@ -62,19 +63,23 @@ function parseAuth(value: string | undefined): AntiGravityAuth {
 
 function requestBody(model: Model<AntiGravityApi>, context: Context, options: StreamOptions, projectId: string): unknown {
   const googleModel = model as unknown as Model<'google-generative-ai'>
+  // pi-ai now carries system instructions and tool deltas inside the transcript.
+  const transcript = normalizeContext(context)
+  const systemPrompt = getCurrentSystemPrompt(transcript.messages)
+  const tools = getCurrentTools(transcript.messages)
   const request: Record<string, unknown> = {
-    contents: convertMessages(googleModel, context),
+    contents: convertMessages(googleModel, transcript),
     ...options.sessionId === undefined ? {} : { sessionId: options.sessionId },
   }
-  if (context.systemPrompt !== undefined) {
-    request.systemInstruction = { role: 'user', parts: [{ text: context.systemPrompt }] }
+  if (systemPrompt.length > 0) {
+    request.systemInstruction = { role: 'user', parts: [{ text: systemPrompt }] }
   }
   const generationConfig: Record<string, unknown> = {}
   if (options.temperature !== undefined) generationConfig.temperature = options.temperature
   if (options.maxTokens !== undefined) generationConfig.maxOutputTokens = options.maxTokens
   if (Object.keys(generationConfig).length > 0) request.generationConfig = generationConfig
-  if (context.tools !== undefined && context.tools.length > 0) {
-    request.tools = convertTools(context.tools, model.id.startsWith('claude-'))
+  if (tools.length > 0) {
+    request.tools = convertTools(tools, model.id.startsWith('claude-'))
   }
   return {
     project: projectId,
@@ -229,19 +234,15 @@ export function streamAntiGravity(
           }
         }
         if (candidate?.finishReason !== undefined) {
-          if (candidate.finishReason === 'MALFORMED_FUNCTION_CALL') {
-            output.stopReason = 'stop'
-            output.errorMessage = undefined
-          } else {
-            output.stopReason = mapStopReasonString(candidate.finishReason)
-            if (output.stopReason === 'error') {
-              output.errorMessage = `Anti Gravity finishReason: ${candidate.finishReason}`
-            }
+          output.rawStopReason = candidate.finishReason
+          output.stopReason = mapStopReasonString(candidate.finishReason)
+          if (output.stopReason === 'error') {
+            output.errorMessage = `Anti Gravity finishReason: ${candidate.finishReason}${candidate.finishMessage ? `; ${candidate.finishMessage}` : ''}`
           }
         }
-        if (output.content.some(block => block.type === 'toolCall')) {
+        // A valid call must not hide a terminal provider error in the same response.
+        if (output.stopReason === 'stop' && output.content.some(block => block.type === 'toolCall')) {
           output.stopReason = 'toolUse'
-          output.errorMessage = undefined
         }
         const usage = data.usageMetadata
         if (usage !== undefined) {
@@ -272,11 +273,10 @@ export function streamAntiGravity(
         }
       }
       closeCurrent()
-      if (output.content.length === 0) {
-        output.content.push({
-          type: 'text',
-          text: 'The model failed to format a tool call (MALFORMED_FUNCTION_CALL). Please retry or rephrase.',
-        })
+      if (output.stopReason === 'error') throw new Error(output.errorMessage ?? 'Anti Gravity provider error')
+      // Empty text and thought-only completions cannot answer the user or continue a tool turn.
+      if (!output.content.some(block => block.type === 'toolCall' || (block.type === 'text' && block.text.trim().length > 0))) {
+        throw new Error(`Anti Gravity returned no actionable response (finishReason: ${output.rawStopReason ?? 'missing'})`)
       }
       const reason = output.stopReason === 'toolUse' || output.stopReason === 'length' ? output.stopReason : 'stop'
       stream.push({ type: 'done', reason, message: output })
