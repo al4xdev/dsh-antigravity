@@ -186,6 +186,7 @@ function profileFor(
     requestImageMaxBytes: config.requestImageMaxBytes,
     retryPolicy: resolveRetryPolicy(undefined, 'llm-pi-ai-antigravity: retryPolicy'),
     configuredMaxTokens: new Map(),
+    modelErrors: new Map(),
     piProvider: providerFor(config, models, oauth),
   }]])
 }

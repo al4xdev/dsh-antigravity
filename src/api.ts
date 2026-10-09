@@ -228,7 +228,17 @@ export function streamAntiGravity(
             stream.push({ type: 'toolcall_end', contentIndex: index, toolCall, partial: output })
           }
         }
-        if (candidate?.finishReason !== undefined) output.stopReason = mapStopReasonString(candidate.finishReason)
+        if (candidate?.finishReason !== undefined) {
+          output.stopReason = mapStopReasonString(candidate.finishReason)
+          // TEMP DIAGNOSTIC - mapStopReasonString collapses every finishReason
+          // other than STOP/MAX_TOKENS to 'error' with no message, so the
+          // harness reported the generic "pi-ai stream error" and the real
+          // cause (SAFETY, MALFORMED_FUNCTION_CALL, ...) was lost. Revert to
+          // the one-line assignment once the trigger is identified.
+          if (output.stopReason === 'error') {
+            output.errorMessage = `Anti Gravity finishReason: ${candidate.finishReason}`
+          }
+        }
         if (output.content.some(block => block.type === 'toolCall')) output.stopReason = 'toolUse'
         const usage = data.usageMetadata
         if (usage !== undefined) {

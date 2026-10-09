@@ -45,6 +45,67 @@ function descriptor(
   }
 }
 
+/** Provider family guessed from a live model id when no reviewed entry exists. */
+function familyOfId(id: string): 'gemini' | 'claude' | 'gpt' | undefined {
+  const lower = id.toLowerCase()
+  if (lower.startsWith('gemini')) return 'gemini'
+  if (lower.startsWith('claude')) return 'claude'
+  if (lower.startsWith('gpt')) return 'gpt'
+  return undefined
+}
+
+/** Effort tier encoded in the id suffix, e.g. `gemini-4.0-flash-high`. */
+function levelOfId(id: string): 'low' | 'medium' | 'high' | undefined {
+  const match = /-(low|medium|high)$/.exec(id)
+  if (match === null) return undefined
+  return match[1] as 'low' | 'medium' | 'high'
+}
+
+/** Fallback display name for an id the response left without a `displayName`. */
+function titleOfId(id: string): string {
+  return id
+    .split(/[-_/]/)
+    .filter(part => part.length > 0)
+    .map(part => part[0].toUpperCase() + part.slice(1))
+    .join(' ')
+}
+
+/**
+ * Build a descriptor for an account-visible id the reviewed list does not cover.
+ * An unknown family keeps the conservative 131k window, and an id without a tier
+ * suffix exposes every effort instead of hiding a model we simply do not know.
+ * @param id - live model id from `fetchAvailableModels`.
+ * @param entry - live catalog entry carrying the optional display name.
+ * @returns descriptor using only facts inferable without a review pass.
+ */
+function discoveredModel(id: string, entry: { displayName?: unknown }): Model<AntiGravityApi> {
+  const family = familyOfId(id)
+  const level = levelOfId(id)
+  const name = typeof entry.displayName === 'string' && entry.displayName.length > 0 ? entry.displayName : titleOfId(id)
+  const contextWindow = family === 'gemini' ? 1_048_576 : family === 'claude' ? 200_000 : 131_072
+  return {
+    id,
+    name,
+    api: 'google-antigravity',
+    provider: PROVIDER,
+    baseUrl: ENDPOINTS[0],
+    reasoning: true,
+    thinkingLevelMap: {
+      off: null,
+      minimal: null,
+      low: level === undefined || level === 'low' ? 'low' : null,
+      medium: level === undefined || level === 'medium' ? 'medium' : null,
+      high: level === undefined || level === 'high' ? 'high' : null,
+      xhigh: null,
+      max: null,
+    },
+    input: ['text', 'image'],
+    cost: NO_COST,
+    contextWindow,
+    maxTokens: 65_536,
+  }
+}
+
 /** Reviewed descriptors; the account-visible catalog is always reconciled online before display. */
 export const maintainedModels: readonly Model<AntiGravityApi>[] = [
   descriptor('gemini-3.8-flash-high', 'Gemini 3.8 Flash (High)', 'gemini', 'high'),
@@ -71,21 +132,30 @@ interface AvailableModelsResponse {
 }
 
 /**
- * Reconcile the maintained descriptors with one official `fetchAvailableModels` response.
+ * Union the maintained descriptors with one official `fetchAvailableModels` response.
+ * A missing reviewed entry no longer hides a live model; it only costs the review
+ * metadata, which `discoveredModel` reconstructs from the id.
  * @param payload - decoded Cloud Code Assist response body.
- * @returns reviewed descriptors that also appear in the response.
+ * @returns reviewed descriptors plus every live id they do not cover.
  */
 export function parseAvailableModels(payload: unknown): readonly Model<AntiGravityApi>[] {
   if (typeof payload !== 'object' || payload === null || typeof (payload as AvailableModelsResponse).models !== 'object') {
     throw new Error('Anti Gravity model response must contain a models object')
   }
   const live = (payload as Required<AvailableModelsResponse>).models
-  return maintainedModels.flatMap((model) => {
+  const reviewed = new Set(maintainedModels.map(model => model.id))
+  const maintained = maintainedModels.flatMap((model) => {
     const entry = live[model.id]
     if (entry === undefined) return []
     const name = typeof entry.displayName === 'string' && entry.displayName.length > 0 ? entry.displayName : model.name
     return [{ ...model, name }]
   })
+  const discovered = Object.entries(live)
+    // The response also lists internal ids (`chat_*`, `tab_*`, `*-tiered`) that are
+    // not selectable products; every real model carries a display name and they do not.
+    .filter(([id, entry]) => !reviewed.has(id) && typeof entry.displayName === 'string' && entry.displayName.length > 0)
+    .map(([id, entry]) => discoveredModel(id, entry))
+  return [...maintained, ...discovered]
 }
 
 /**
