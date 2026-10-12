@@ -21,8 +21,10 @@ import {
   PROVIDER,
 } from './models.ts'
 import { AntiGravityAuthRemote } from './remote-service.ts'
+import { AntiGravitySearchProvider, DEFAULT_SEARCH_MODEL } from './search.ts'
 
 export { createAntiGravityOAuth } from './auth.ts'
+export { AntiGravitySearchProvider, DEFAULT_SEARCH_MODEL } from './search.ts'
 export {
   DEFAULT_OAUTH_CLIENT_CONFIG_REF,
   extractOAuthClientConfig,
@@ -62,6 +64,10 @@ const DEFAULT_REQUEST_IMAGE_MAX_BYTES = 1024 * 1024
 
 /** Deployment configuration contains references and paths, never OAuth values. */
 export interface Config {
+  /** Opt-in native Google Search registration; requires the optional web service. */
+  webSearch?: boolean
+  /** Exact native search model; no automatic fallback. */
+  searchModel?: string
   /** Credential reference containing the OAuth token JSON document. */
   oauthCredentialEnv?: string
   /** Credential reference containing the private OAuth client JSON document. */
@@ -86,6 +92,8 @@ export interface Config {
 
 /** Schemastery validator for the independent Anti Gravity route. */
 export const Config: z<Config> = z.object({
+  webSearch: z.boolean().default(false),
+  searchModel: z.string().default(DEFAULT_SEARCH_MODEL),
   oauthCredentialEnv: z.string().role('credential-ref').default(DEFAULT_OAUTH_CREDENTIAL_REF),
   oauthClientConfigRef: z.string().role('credential-ref').default(DEFAULT_OAUTH_CLIENT_CONFIG_REF),
   macosApplicationPath: z.string(),
@@ -97,6 +105,8 @@ export const Config: z<Config> = z.object({
 })
 
 interface ResolvedConfig {
+  readonly webSearch: boolean
+  readonly searchModel: string
   readonly oauthCredentialEnv: ReturnType<typeof credentialRef>
   readonly oauthClientConfigRef: string
   readonly macosApplicationPath?: string
@@ -108,6 +118,8 @@ interface ResolvedConfig {
 }
 
 function resolveConfig(config: Config): ResolvedConfig {
+  const searchModel = config.searchModel ?? DEFAULT_SEARCH_MODEL
+  if (searchModel.trim().length === 0) throw new Error('llm-pi-ai-antigravity: searchModel must not be empty')
   const displayName = config.displayName ?? DEFAULT_DISPLAY_NAME
   const streamIdleTimeoutMs = config.streamIdleTimeoutMs ?? DEFAULT_STREAM_IDLE_TIMEOUT_MS
   const maxRequestImageBytes = config.maxRequestImageBytes ?? DEFAULT_MAX_REQUEST_IMAGE_BYTES
@@ -131,6 +143,8 @@ function resolveConfig(config: Config): ResolvedConfig {
     throw new Error('llm-pi-ai-antigravity: requestImageMaxBytes must be a positive safe integer')
   }
   return {
+    webSearch: config.webSearch ?? false,
+    searchModel,
     oauthCredentialEnv: credentialRef(config.oauthCredentialEnv ?? DEFAULT_OAUTH_CREDENTIAL_REF),
     oauthClientConfigRef: config.oauthClientConfigRef ?? DEFAULT_OAUTH_CLIENT_CONFIG_REF,
     ...config.macosApplicationPath === undefined ? {} : { macosApplicationPath: config.macosApplicationPath },
@@ -205,6 +219,12 @@ export function apply(ctx: Context, rawConfig: Config): void {
   ))
   const credentials = new AntiGravityCredentialManager(ctx.credentials, config.oauthCredentialEnv, oauth)
   new AntiGravityAuthRemote(ctx, ctx.credentials, config.oauthCredentialEnv, oauth)
+  if (config.webSearch) {
+    // Keep inference independent of web, and re-register if that service is replaced.
+    ctx.inject(['web'], (webContext) => {
+      webContext.web.registerSearchProvider(new AntiGravitySearchProvider(credentials, config.searchModel))
+    })
+  }
 
   let profiles = profileFor(config, maintainedModels, oauth)
   const adapter = new PiAiAdapter({

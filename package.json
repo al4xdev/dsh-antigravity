@@ -6,6 +6,8 @@
   "type": "module",
   "scripts": {
     "bundle": "tsdown && node scripts/gen-typert.mjs",
+    "bundle:host": "npm exec --yes --package=esbuild@0.28.2 -- esbuild src/index.ts --bundle --platform=node --format=esm --packages=external --target=node22 --tsconfig=tsconfig.standalone.json --outfile=lib/index.js",
+    "test:search": "npm exec --yes --package=vitest@3.2.4 -- vitest run --config vitest.standalone.config.mjs",
     "watch": "tsdown --watch"
   },
   "main": "lib/index.js",
@@ -104,6 +106,7 @@
     "@deepseek-ai/dsh-llm": "0.2.0-rc.2",
     "@deepseek-ai/dsh-llm-pi-ai": "0.2.0-rc.2",
     "@deepseek-ai/dsh-timeout": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-web": "0.2.0-rc.2",
     "@deepseek-ai/dsh-typert-protocol": "0.2.0-rc.2",
     "@deepseek-ai/cordis": "4.0.4",
     "@deepseek-ai/schemastery": "3.18.4",

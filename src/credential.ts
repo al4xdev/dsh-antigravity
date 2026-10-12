@@ -102,7 +102,8 @@ export class AntiGravityCredentialManager {
     if (Date.now() < current.expires) return current
     let refreshed: OAuthCredential
     try {
-      refreshed = await this.oauth.refresh(current)
+      // Shared refresh must eventually settle even if the initiating search was cancelled.
+      refreshed = await this.oauth.refresh(current, AbortSignal.timeout(60_000))
     } catch (error) {
       throw new LlmError('llm-pi-ai-antigravity: OAuth refresh failed', 'AUTH', { cause: error })
     }

@@ -77,7 +77,7 @@ afterEach(async () => {
 })
 
 describe('Anti Gravity provider catalog', () => {
-  it('keeps only maintained models reported by the live endpoint', () => {
+  it('keeps maintained models and discovers named models reported by the live endpoint', () => {
     expect(parseAvailableModels({
       models: {
         'gemini-3.7-flash-high': { displayName: 'Gemini 3.7 Flash High Live' },
@@ -87,6 +87,7 @@ describe('Anti Gravity provider catalog', () => {
     }).map(model => [model.id, model.name])).toEqual([
       ['gemini-3.7-flash-high', 'Gemini 3.7 Flash High Live'],
       ['claude-sonnet-4-6', 'Claude Sonnet 4.6 Live'],
+      ['unknown', 'Unknown'],
     ])
   })
 

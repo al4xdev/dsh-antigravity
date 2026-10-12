@@ -38,6 +38,43 @@ The installed bundle contributes the following Cordis configuration:
 
 Both `oauthCredentialEnv` and `oauthClientConfigRef` name credential references. The bundled local provider stores documents in `$DSH_HOME/.credentials.yaml`; deployments may use another credential backend.
 
+## Optional Google Search
+
+Native Google Search is disabled by default. To register the `google-antigravity`
+search provider with the optional `ctx.web` service, add these plugin options:
+
+```yaml
+webSearch: true
+searchModel: gemini-3.8-flash-low
+```
+
+When multiple search providers are installed, explicitly select
+`searchProvider: google-antigravity` in the web service configuration, preserving
+`fetchProvider: http` explicitly when replacing a loader config block. This plugin
+never changes that selection or the fetch provider. Without `ctx.web`, inference
+continues normally and search registration waits for the service.
+
+Search reuses the plugin's OAuth credential manager and sends native
+`tools: [{ googleSearch: {} }]` to Cloud Code Assist. The exact configured model is
+used without fallback. A successful result requires `finishReason: STOP` and
+search grounding (`webSearchQueries` or valid web grounding chunks). Sources come
+only from HTTP(S) `groundingChunks.web.uri`, including Google's grounding redirect
+URLs; URLs mentioned in answer text are never promoted to citations. Query-only
+grounding may return no sources. Credentials are checked at execution, not by the
+provider's cheap local availability check.
+
+Requests have a 60-second deadline, 2 MiB stream limit, 128 Ki-character answer
+limit and at most 64 sources (also bounded by `maxResults`). Answer/source clipping
+sets `truncated`; transport overflow, missing grounding or incomplete generation
+fails instead of returning an unverified partial answer. Errors never include
+response bodies or OAuth tokens. Internal endpoint support depends on account
+entitlements and the selected model.
+
+For this standalone checkout, run `npm run test:search` (mocked tests, no network)
+and `npm run bundle:host` (host-only build). The default `pnpm run bundle` still
+expects upstream monorepo build tooling. No generated `lib` files are changed by
+editing these sources.
+
 ## Security and Credentials
 
 - The plugin uses two credential references: `GOOGLE_ANTIGRAVITY_OAUTH_CLIENT_CONFIG` for private OAuth application details and `GOOGLE_ANTIGRAVITY_OAUTH_CREDENTIAL` for user tokens.

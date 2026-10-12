@@ -33,7 +33,7 @@ interface ResponsePart {
   text?: string
   thought?: boolean
   thoughtSignature?: string
-  functionCall?: { id?: string; name?: string; args?: Record<string, unknown> }
+  functionCall?: { id?: string; name?: string; args?: ToolCall['arguments'] }
 }
 interface ResponseChunk {
   response?: {

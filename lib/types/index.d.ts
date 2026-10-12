@@ -7,11 +7,16 @@ export type { AntiGravityOAuthClientConfig } from './client-config.ts';
 export { AntiGravityCredentialManager, parseAntiGravityCredential, } from './credential.ts';
 export { fetchAvailableModels, fetchAvailableModelsForCredential, maintainedModels, parseAvailableModels, PROVIDER, } from './models.ts';
 export { AntiGravityAuthRemote } from './remote-service.ts';
+export { AntiGravitySearchProvider, DEFAULT_SEARCH_MODEL } from './search.ts';
 export type { AntiGravityAuthSnapshot, AntiGravityLoginId, AntiGravityLoginStart, AntiGravityLoginStatus, } from './types.ts';
 export declare const name = "llm-pi-ai-antigravity";
 export declare const inject: string[];
 /** Deployment configuration contains references and paths, never OAuth values. */
 export interface Config {
+    /** Opt-in native Google Search provider registration. */
+    webSearch?: boolean;
+    /** Exact native search model; no automatic fallback. */
+    searchModel?: string;
     /** Credential reference containing the OAuth token JSON document. */
     oauthCredentialEnv?: string;
     /** Credential reference containing the private OAuth client JSON document. */
