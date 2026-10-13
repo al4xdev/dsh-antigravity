@@ -2,12 +2,15 @@
 import type { Context } from '@deepseek-ai/cordis';
 import z from '@deepseek-ai/schemastery';
 import type { RetryPolicyConfig } from '@deepseek-ai/dsh-llm';
+import type { QuotaResetRetryConfig } from './quota-retry.ts';
 export { AntiGravityUsageService } from './usage.ts';
 export { AntiGravityAdapter, captureFailureReporter } from './failure-bridge.ts';
 export { AntiGravityFailure } from './failure.ts';
 export type { AntiGravityFailureData, AntiGravityFailureCode, AntiGravityFailureReason } from './failure.ts';
 export { formatUsageSnapshot, parseModelQuotaSnapshot, QuotaPayloadError } from './quota.ts';
 export type { AntiGravityUsageRow, AntiGravityUsageSnapshot, UsageErrorCode } from './quota.ts';
+export { MAX_QUOTA_WAIT_MS, QUOTA_RESET_RETRY_CODE, QUOTA_RESET_LIMIT_CODE, quotaResetFailure, resolveQuotaResetRetry } from './quota-retry.ts';
+export type { QuotaResetRetryConfig, ResolvedQuotaResetRetry } from './quota-retry.ts';
 export { createAntiGravityOAuth } from './auth.ts';
 export { AntiGravitySearchProvider, DEFAULT_SEARCH_MODEL } from './search.ts';
 export { DEFAULT_OAUTH_CLIENT_CONFIG_REF, extractOAuthClientConfig, importInstalledOAuthClientConfig, parseOAuthClientConfig, resolveOAuthClientConfig, } from './client-config.ts';
@@ -36,6 +39,8 @@ export interface Config {
     streamIdleTimeoutMs?: number;
     /** Provider-owned request retry policy; omission preserves official defaults. */
     retryPolicy?: RetryPolicyConfig;
+    /** Fresh usage resets may authorize a longer wait through the scoped retry-engine fork. */
+    quotaResetRetry?: QuotaResetRetryConfig;
     /**
      * Base64 image payload bound for one request. Older images become text
      * placeholders once a session's accumulated images exceed it, so a long

@@ -103,6 +103,9 @@ export class AntiGravityUsageService extends Service {
     }, 'llm-pi-ai-antigravity: usage lifecycle')
   }
 
+  /** Request-local recovery uses this epoch to reject observations after account changes. */
+  get observationGeneration(): number { return this.generation }
+
   /** Invalidate both cached and pending observations when the account reference changes. */
   invalidate(): void {
     this.generation++

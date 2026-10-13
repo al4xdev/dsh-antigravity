@@ -102,6 +102,6 @@ export function formatUsageSnapshot(snapshot: AntiGravityUsageSnapshot, now = Da
     lines.push(`${label(row.name)} [${label(row.id)}]: ${percent(row.remainingFraction)}; reset ${reset}.`)
   }
   if (snapshot.truncated) lines.push('Lista truncada; não representa todos os modelos.')
-  lines.push('Modelos podem compartilhar cota; percentuais não são somados. Usage não controla créditos extras nem ativa retry por quota.')
+  lines.push('Modelos podem compartilhar cota; percentuais não são somados. Este comando não inicia retry nem controla créditos extras. Quando habilitada, a recuperação usa o reset reportado após falha do modelo, até 24h; não garante retorno da cota.')
   return lines.join('\n')
 }

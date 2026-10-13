@@ -24,6 +24,8 @@ import { AntiGravityAuthRemote } from './remote-service.ts'
 import { AntiGravitySearchProvider, DEFAULT_SEARCH_MODEL } from './search.ts'
 import { AntiGravityUsageService, registerUsageCommand } from './usage.ts'
 import { AntiGravityAdapter } from './failure-bridge.ts'
+import { MAX_QUOTA_WAIT_MS, QUOTA_RESET_RETRY_CODE, resolveQuotaResetRetry } from './quota-retry.ts'
+import type { QuotaResetRetryConfig, ResolvedQuotaResetRetry } from './quota-retry.ts'
 
 export { AntiGravityUsageService } from './usage.ts'
 export { AntiGravityAdapter, captureFailureReporter } from './failure-bridge.ts'
@@ -31,6 +33,8 @@ export { AntiGravityFailure } from './failure.ts'
 export type { AntiGravityFailureData, AntiGravityFailureCode, AntiGravityFailureReason } from './failure.ts'
 export { formatUsageSnapshot, parseModelQuotaSnapshot, QuotaPayloadError } from './quota.ts'
 export type { AntiGravityUsageRow, AntiGravityUsageSnapshot, UsageErrorCode } from './quota.ts'
+export { MAX_QUOTA_WAIT_MS, QUOTA_RESET_RETRY_CODE, QUOTA_RESET_LIMIT_CODE, quotaResetFailure, resolveQuotaResetRetry } from './quota-retry.ts'
+export type { QuotaResetRetryConfig, ResolvedQuotaResetRetry } from './quota-retry.ts'
 
 export { createAntiGravityOAuth } from './auth.ts'
 export { AntiGravitySearchProvider, DEFAULT_SEARCH_MODEL } from './search.ts'
@@ -89,6 +93,8 @@ export interface Config {
   streamIdleTimeoutMs?: number
   /** Provider-owned request retry policy; omission preserves official defaults. */
   retryPolicy?: RetryPolicyConfig
+  /** Fresh usage resets may authorize a longer wait through the scoped retry-engine fork. */
+  quotaResetRetry?: QuotaResetRetryConfig
   /**
    * Base64 image payload bound for one request. Older images become text
    * placeholders once a session's accumulated images exceed it, so a long
@@ -111,6 +117,10 @@ export const Config: z<Config> = z.object({
   displayName: z.string().default(DEFAULT_DISPLAY_NAME),
   streamIdleTimeoutMs: z.number().min(Number.MIN_VALUE).max(MAX_TIMER_DELAY_MS).default(DEFAULT_STREAM_IDLE_TIMEOUT_MS),
   retryPolicy: RetryPolicySchema,
+  quotaResetRetry: z.object({
+    enabled: z.boolean().default(false),
+    maxWaitMs: z.number().step(1).min(1).max(MAX_QUOTA_WAIT_MS).default(MAX_QUOTA_WAIT_MS),
+  }),
   maxRequestImageBytes: z.number().step(1).min(1).default(DEFAULT_MAX_REQUEST_IMAGE_BYTES),
   requestImagePixelBudget: z.number().step(1).min(1).default(DEFAULT_REQUEST_IMAGE_PIXEL_BUDGET),
   requestImageMaxBytes: z.number().step(1).min(1).default(DEFAULT_REQUEST_IMAGE_MAX_BYTES),
@@ -125,6 +135,7 @@ interface ResolvedConfig {
   readonly displayName: string
   readonly streamIdleTimeoutMs: number
   readonly retryPolicy: ResolvedRetryPolicy
+  readonly quotaResetRetry: ResolvedQuotaResetRetry
   readonly maxRequestImageBytes: number
   readonly requestImagePixelBudget: number
   readonly requestImageMaxBytes: number
@@ -155,6 +166,15 @@ function resolveConfig(config: Config): ResolvedConfig {
   if (!Number.isSafeInteger(requestImageMaxBytes) || requestImageMaxBytes <= 0) {
     throw new Error('llm-pi-ai-antigravity: requestImageMaxBytes must be a positive safe integer')
   }
+  const quotaResetRetry = resolveQuotaResetRetry(config.quotaResetRetry)
+  const basePolicy = resolveRetryPolicy(config.retryPolicy, 'llm-pi-ai-antigravity: retryPolicy')
+  if (quotaResetRetry.enabled && basePolicy.mode !== 'normal') {
+    throw new Error('quotaResetRetry requires normal retry mode')
+  }
+  // Register one stable identity: quota and transient waits consume the same budget.
+  const retryPolicy: ResolvedRetryPolicy = quotaResetRetry.enabled && basePolicy.mode === 'normal'
+    ? Object.freeze({ ...basePolicy, retryableCodes: Object.freeze([...new Set([...basePolicy.retryableCodes, QUOTA_RESET_RETRY_CODE])]) })
+    : basePolicy
   return {
     webSearch: config.webSearch ?? false,
     searchModel,
@@ -163,7 +183,8 @@ function resolveConfig(config: Config): ResolvedConfig {
     ...config.macosApplicationPath === undefined ? {} : { macosApplicationPath: config.macosApplicationPath },
     displayName,
     streamIdleTimeoutMs,
-    retryPolicy: resolveRetryPolicy(config.retryPolicy, 'llm-pi-ai-antigravity: retryPolicy'),
+    retryPolicy,
+    quotaResetRetry,
     maxRequestImageBytes,
     requestImagePixelBudget,
     requestImageMaxBytes,
@@ -255,6 +276,7 @@ export function apply(ctx: Context, rawConfig: Config): void {
     },
     resolveAttachments: () => ctx.get('attachments'),
   })
+  adapter.configureQuotaRecovery(usage, config.quotaResetRetry)
   const registration = ctx.llm.registerAdapter([PROVIDER], adapter)
 
   const controller = new AbortController()

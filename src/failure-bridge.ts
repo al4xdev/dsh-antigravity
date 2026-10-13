@@ -4,10 +4,15 @@ import { LlmError } from '@deepseek-ai/dsh-llm'
 import type { GenerateOptions, LlmFailure, PreparedAdapterCall, StreamChunk } from '@deepseek-ai/dsh-llm'
 import { PiAiAdapter } from '@deepseek-ai/dsh-llm-pi-ai'
 import type { AntiGravityFailureData } from './failure.ts'
+import type { AntiGravityUsageService } from './usage.ts'
+import { quotaResetFailure } from './quota-retry.ts'
+import type { ResolvedQuotaResetRetry } from './quota-retry.ts'
 
 interface FailureContext {
   active: boolean
   failure?: Readonly<LlmFailure>
+  failedAtMs?: number
+  enriched?: boolean
 }
 const requestFailures = new AsyncLocalStorage<FailureContext>()
 
@@ -27,6 +32,7 @@ export function captureFailureReporter(): (failure: Readonly<AntiGravityFailureD
         ...failure.providerRetryAfterMs === undefined ? {} : { providerRetryAfterMs: failure.providerRetryAfterMs },
       })
       context.failure = error.failure
+      context.failedAtMs = Date.now()
     } catch {
       // A malformed observer payload must not prevent the producer from settling
       // its own error event. Leave the original error to the official host.
@@ -71,6 +77,7 @@ function terminalChunk(chunk: StreamChunk, context: FailureContext, signal: Abor
 function requestStream(
   options: GenerateOptions,
   dispatch: (options: GenerateOptions) => AsyncIterable<StreamChunk>,
+  recovery?: QuotaRecovery,
 ): AsyncIterable<StreamChunk> {
   return {
     [Symbol.asyncIterator]() {
@@ -78,15 +85,32 @@ function requestStream(
       const consumer = new AbortController()
       const signal = options.signal === undefined ? consumer.signal : AbortSignal.any([options.signal, consumer.signal])
       const request = { ...options, signal }
+      const generation = recovery?.usage.observationGeneration
       let iterator: AsyncIterator<StreamChunk> | undefined
       let exhausted = false
       const run = <T>(operation: () => T): T => requestFailures.run(context, operation)
+      const enrich = async (): Promise<void> => {
+        if (context.enriched || context.failure === undefined || recovery === undefined
+          || !recovery.config.enabled || !['RATE_LIMIT', 'QUOTA_EXCEEDED'].includes(context.failure.code)) return
+        context.enriched = true
+        if (signal.aborted || generation !== recovery.usage.observationGeneration) return
+        const failure = context.failure
+        try {
+          const snapshot = await recovery.usage.snapshot({ refresh: true, signal })
+          if (!context.active || signal.aborted || generation !== recovery.usage.observationGeneration) return
+          context.failure = quotaResetFailure(failure, recovery.model, snapshot,
+            context.failedAtMs ?? Date.now(), Date.now(), recovery.config.maxWaitMs)
+        } catch {
+          // Metadata must never replace the original typed failure with raw transport errors.
+        }
+      }
       const generator = (async function* () {
         try {
           if (signal.aborted) throw new LlmError('Anti Gravity request cancelled', 'ABORTED')
           try {
             iterator = run(() => dispatch(request)[Symbol.asyncIterator]())
           } catch (error) {
+            if (!cancellationOrTimeout(error)) await enrich()
             throw bridgedError(error, context, signal)
           }
           while (true) {
@@ -94,13 +118,18 @@ function requestStream(
             try {
               result = await run(() => iterator!.next())
             } catch (error) {
+              if (!cancellationOrTimeout(error)) await enrich()
               throw bridgedError(error, context, signal)
             }
             if (result.done) {
               exhausted = true
+              await enrich()
               if (context.failure !== undefined) throw bridgedError(new Error('Anti Gravity stream failed'), context, signal)
               return
             }
+            if (result.value.type === 'finish' && result.value.reason.kind !== 'aborted'
+              && !(result.value.reason.kind === 'error'
+                && ['ABORTED', 'TIMEOUT'].includes(result.value.reason.failure.code))) await enrich()
             const chunk = terminalChunk(result.value, context, signal)
             if (chunk.type === 'finish') {
               context.active = false
@@ -138,15 +167,31 @@ function requestStream(
 }
 
 /** Provider-owned bridge; retries are exclusively the official host's job. */
+interface QuotaRecovery {
+  readonly usage: Pick<AntiGravityUsageService, 'snapshot' | 'observationGeneration'>
+  readonly config: ResolvedQuotaResetRetry
+  readonly model: string
+}
+
 export class AntiGravityAdapter extends PiAiAdapter {
+  private quotaRecovery?: Omit<QuotaRecovery, 'model'>
+
+  configureQuotaRecovery(usage: QuotaRecovery['usage'], config: ResolvedQuotaResetRetry): void {
+    this.quotaRecovery = { usage, config }
+  }
+
   override stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
-    return requestStream(options, request => super.stream(request))
+    return requestStream(options, request => super.stream(request),
+      options.provider === 'google-antigravity' && this.quotaRecovery !== undefined
+        ? { ...this.quotaRecovery, model: options.model } : undefined)
   }
 
   override async prepareCall(provider: string, model: string, signal?: AbortSignal): Promise<PreparedAdapterCall> {
     const prepared = await super.prepareCall(provider, model, signal)
     // Calling this.stream here would re-read profiles and break the generation
     // freeze. Keep the exact model descriptor and captured prepared dispatcher.
-    return { ...prepared, stream: options => requestStream(options, request => prepared.stream(request)) }
+    const recovery = provider === 'google-antigravity' && this.quotaRecovery !== undefined
+      ? { ...this.quotaRecovery, model: prepared.model.id } : undefined
+    return { ...prepared, stream: options => requestStream(options, request => prepared.stream(request), recovery) }
   }
 }

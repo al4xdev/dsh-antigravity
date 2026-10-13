@@ -98,13 +98,41 @@ stays unknown. The API does not identify the quota window here: neither a reset
 nearby nor 0% proves five-hour versus weekly quota. Rows are not summed because
 models may share quota. Errors contain safe categories only, never response
 bodies, account identifiers or credential values. Usage errors do not disable
-inference. This feature does not change retries, models, accounts, credits or
-overage settings, and never waits for a future quota window. TUI cancellation
-signals may not be wired to a key; the command's own deadline remains bounded.
+inference. The command itself does not start retries or change models, accounts,
+credits or overage settings. Optional quota-reset recovery below reuses this metadata
+after a failed inference request. TUI cancellation signals may not be wired to a
+key; the command's own deadline remains bounded.
 
 Local source changes require a reviewed generated host bundle; a published
 upstream commit pin does not automatically include this local feature. Validate
 an isolated candidate before replacing the active `lib/index.js`.
+
+## Retry at the reported quota reset (local fork)
+
+`quotaResetRetry: { enabled: true, maxWaitMs: 86400000 }` opts in (default off).
+The dsh-tui profile must also disable native `llm-retry` and insert one local
+`antigravity-quota-retry` entry pointing to `../antigravity-quota-retry/index.mjs`,
+the reviewed minimal fork of the official executor. Patch `name` is a guard,
+not a module-replacement operation. Enabling only the provider is insufficient for waits above20min.
+The original normal9 policy,5s initial backoff and20min transient ceiling remain.
+Quota and transient waits consume the same nine-retry budget and use one engine.
+
+After typed RATE_LIMIT/QUOTA_EXCEEDED, the request-local bridge refreshes usage for
+its exact captured native model id. A fresh future reset authorizes a wait until
+that timestamp or a later server Retry-After/RetryInfo minimum. It reports ISO UTC
+dates in the normal retry/failure detail. Up to24h is allowed; above24h it reports
+the target and stops. Missing, stale, past or mismatched metadata cannot invent a
+reset; ordinary transient recovery stays unchanged. Missing fraction remains
+unknown, never0%; a reset is a provider forecast, not guaranteed quota recovery.
+Explicit quota failure without a usable reset stays terminal.
+
+The provider never sleeps or resends requests internally. The local executor
+records `llm/retry` before its cancellable timer and `llm/retry-started` on wake;
+CLIENT tools dispatch only after a successful attempt. No model/account/route/
+credit rotation is added. The process/session must remain alive: no new restart,
+persistent alarm or cold-resume mechanism is provided. Open a fresh TUI after
+promotion; no automatic restart is performed. Offline scheduling tests do not
+claim that Google quota will actually recover after the predicted reset.
 
 ## Shared inference resilience (local fork)
 
@@ -132,9 +160,10 @@ fallback is limited to a missing endpoint (404); 429/auth/5xx are not retried by
 the provider transport. Request-scoped sanitized failures preserve status and
 validated Retry-After/RetryInfo hints for the official Harness recovery seam.
 Generic 429/RESOURCE_EXHAUSTED/QuotaFailure may mean RPM/TPM, not account quota;
-only known structured exhaustion reasons map to permanent QUOTA_EXCEEDED, and
-the quota window remains unknown. This does not enable waiting for five-hour or
-weekly quota. Partial-output metadata supports recovery diagnostics; actual
+only known structured exhaustion reasons map to QUOTA_EXCEEDED, terminal unless
+explicit quota-reset recovery finds an eligible fresh reset. The quota window
+remains unknown: neither this classification nor the optional wait proves a
+five-hour or weekly quota window. Partial-output metadata supports recovery diagnostics; actual
 client-tool dispatch belongs to the Harness agent loop. Hosted tools/remote
 effects have no exactly-once guarantee. Mock gates do not certify long-term
 backend stability or real billing behavior.
@@ -155,10 +184,11 @@ retryPolicy:
     jitterRatio: 0.1
 ```
 
-Nine retries allow ten attempts. Only the official recovery engine owns waits,
-budgets and cancellation; there is no provider-local retry loop. A valid provider
-hint above the 20-minute cap fails fast in normal mode, rather than being shortened
-or converted into an endless quota wait. Permanent auth/billing/policy failures
+Nine retries allow ten attempts. Only the recovery executor (official, or the
+scoped local fork for quota resets) owns waits, budgets and cancellation; there is
+no provider-local retry loop. Generic provider hints above20min fail fast in
+normal mode. Only a validated fresh quota reset uses the separate up-to24h limit
+when opted in; no server minimum is shortened and no endless wait is added. Permanent auth/billing/policy failures
 and ambiguous remote effects are not reopened. This is independent of any
 whole-turn self-healing policy; an observed whole-turn budget issue is tracked
 separately in Task43 and is not claimed fixed by this provider rollout.

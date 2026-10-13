@@ -23,6 +23,8 @@ export declare class AntiGravityUsageService extends Service {
     private disposed;
     private readonly pending;
     constructor(ctx: Context, credentials: Pick<AntiGravityCredentialManager, 'resolveCredential'>);
+    /** Request-local recovery uses this epoch to reject observations after account changes. */
+    get observationGeneration(): number;
     /** Invalidate both cached and pending observations when the account reference changes. */
     invalidate(): void;
     /** One caller may cancel without cancelling other callers sharing the fetch. */
