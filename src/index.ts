@@ -6,8 +6,8 @@ import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type {} from '@deepseek-ai/dsh-attachment'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
-import { resolveRetryPolicy } from '@deepseek-ai/dsh-llm'
-import { PiAiAdapter } from '@deepseek-ai/dsh-llm-pi-ai'
+import { resolveRetryPolicy, RetryPolicySchema } from '@deepseek-ai/dsh-llm'
+import type { ResolvedRetryPolicy, RetryPolicyConfig } from '@deepseek-ai/dsh-llm'
 import type { ResolvedPiAiProviderProfile } from '@deepseek-ai/dsh-llm-pi-ai'
 import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
 import { antiGravityApi } from './api.ts'
@@ -22,6 +22,15 @@ import {
 } from './models.ts'
 import { AntiGravityAuthRemote } from './remote-service.ts'
 import { AntiGravitySearchProvider, DEFAULT_SEARCH_MODEL } from './search.ts'
+import { AntiGravityUsageService, registerUsageCommand } from './usage.ts'
+import { AntiGravityAdapter } from './failure-bridge.ts'
+
+export { AntiGravityUsageService } from './usage.ts'
+export { AntiGravityAdapter, captureFailureReporter } from './failure-bridge.ts'
+export { AntiGravityFailure } from './failure.ts'
+export type { AntiGravityFailureData, AntiGravityFailureCode, AntiGravityFailureReason } from './failure.ts'
+export { formatUsageSnapshot, parseModelQuotaSnapshot, QuotaPayloadError } from './quota.ts'
+export type { AntiGravityUsageRow, AntiGravityUsageSnapshot, UsageErrorCode } from './quota.ts'
 
 export { createAntiGravityOAuth } from './auth.ts'
 export { AntiGravitySearchProvider, DEFAULT_SEARCH_MODEL } from './search.ts'
@@ -78,6 +87,8 @@ export interface Config {
   displayName?: string
   /** Maximum provider idle time while one stream read is outstanding. */
   streamIdleTimeoutMs?: number
+  /** Provider-owned request retry policy; omission preserves official defaults. */
+  retryPolicy?: RetryPolicyConfig
   /**
    * Base64 image payload bound for one request. Older images become text
    * placeholders once a session's accumulated images exceed it, so a long
@@ -99,6 +110,7 @@ export const Config: z<Config> = z.object({
   macosApplicationPath: z.string(),
   displayName: z.string().default(DEFAULT_DISPLAY_NAME),
   streamIdleTimeoutMs: z.number().min(Number.MIN_VALUE).max(MAX_TIMER_DELAY_MS).default(DEFAULT_STREAM_IDLE_TIMEOUT_MS),
+  retryPolicy: RetryPolicySchema,
   maxRequestImageBytes: z.number().step(1).min(1).default(DEFAULT_MAX_REQUEST_IMAGE_BYTES),
   requestImagePixelBudget: z.number().step(1).min(1).default(DEFAULT_REQUEST_IMAGE_PIXEL_BUDGET),
   requestImageMaxBytes: z.number().step(1).min(1).default(DEFAULT_REQUEST_IMAGE_MAX_BYTES),
@@ -112,6 +124,7 @@ interface ResolvedConfig {
   readonly macosApplicationPath?: string
   readonly displayName: string
   readonly streamIdleTimeoutMs: number
+  readonly retryPolicy: ResolvedRetryPolicy
   readonly maxRequestImageBytes: number
   readonly requestImagePixelBudget: number
   readonly requestImageMaxBytes: number
@@ -150,6 +163,7 @@ function resolveConfig(config: Config): ResolvedConfig {
     ...config.macosApplicationPath === undefined ? {} : { macosApplicationPath: config.macosApplicationPath },
     displayName,
     streamIdleTimeoutMs,
+    retryPolicy: resolveRetryPolicy(config.retryPolicy, 'llm-pi-ai-antigravity: retryPolicy'),
     maxRequestImageBytes,
     requestImagePixelBudget,
     requestImageMaxBytes,
@@ -198,7 +212,7 @@ function profileFor(
     maxRequestImageBytes: config.maxRequestImageBytes,
     requestImagePixelBudget: config.requestImagePixelBudget,
     requestImageMaxBytes: config.requestImageMaxBytes,
-    retryPolicy: resolveRetryPolicy(undefined, 'llm-pi-ai-antigravity: retryPolicy'),
+    retryPolicy: config.retryPolicy,
     configuredMaxTokens: new Map(),
     modelErrors: new Map(),
     piProvider: providerFor(config, models, oauth),
@@ -219,6 +233,11 @@ export function apply(ctx: Context, rawConfig: Config): void {
   ))
   const credentials = new AntiGravityCredentialManager(ctx.credentials, config.oauthCredentialEnv, oauth)
   new AntiGravityAuthRemote(ctx, ctx.credentials, config.oauthCredentialEnv, oauth)
+  const usage = new AntiGravityUsageService(ctx, credentials)
+  registerUsageCommand(ctx, usage)
+  ctx.on('credentials/reference-updated', (ref) => {
+    if (ref === config.oauthCredentialEnv) usage.invalidate()
+  })
   if (config.webSearch) {
     // Keep inference independent of web, and re-register if that service is replaced.
     ctx.inject(['web'], (webContext) => {
@@ -227,7 +246,7 @@ export function apply(ctx: Context, rawConfig: Config): void {
   }
 
   let profiles = profileFor(config, maintainedModels, oauth)
-  const adapter = new PiAiAdapter({
+  const adapter = new AntiGravityAdapter({
     profiles: () => profiles,
     resolveApiKey: () => credentials.resolveApiKey(),
     auth: {

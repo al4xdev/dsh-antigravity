@@ -2,7 +2,7 @@
 
 [中文](README.zh.md) | English
 
-Allows connecting to the **Google Anti Gravity** Coding Plan as an LLM Provider, enabling [DeepSeek Harness](https://github.com/deepseek-ai/DeepSeek-Harness) to directly use all top-tier AI models under your account (including Gemini 3.7/3.6/3.5 Flash, Gemini 3.1 Pro, Claude 3.7 / Opus 4.6, GPT-OSS, etc.) for seamless web-based chat and coding.
+Connects the **Google Anti Gravity** Coding Plan to [DeepSeek Harness](https://github.com/deepseek-ai/DeepSeek-Harness) for chat and coding with models exposed by your account. The current reviewed comparison pair is Claude Opus 5.5 High (`claude-opus-5-5-high`) and Gemini 3.8 Flash Low (`gemini-3.8-flash-low`); catalog availability and quota remain account-dependent.
 
 ## Target Audience and Use Cases
 
@@ -74,6 +74,133 @@ For this standalone checkout, run `npm run test:search` (mocked tests, no networ
 and `npm run bundle:host` (host-only build). The default `pnpm run bundle` still
 expects upstream monorepo build tooling. No generated `lib` files are changed by
 editing these sources.
+
+## Reported quota usage (local fork)
+
+Use `/antigravity-usage` or `/antigravity-usage --refresh` in a Harness UI with
+its command registry mounted. This on-demand metadata command makes no inference
+request and does not start a model turn. The host also exposes
+`ctx.antiGravityUsage.snapshot({ refresh?, signal? })`; no web client or Remote
+changes are required. Unknown arguments are rejected. Existing registry grants
+still apply, and results are recorded as command output in the session.
+
+The command reads `fetchAvailableModels` quota metadata, cached for 60 seconds,
+with a 10-second total deadline and a 1 MiB response limit. Concurrent callers
+share a request; cancelling one caller does not cancel other callers. Account
+reference changes/logout invalidate cached and pending observations. If OAuth
+refresh updates the reference during a query, that query fails closed: run the
+command again explicitly. OAuth renewal may persist refreshed credentials.
+No quota polling or new startup requests are added.
+
+Reported fractions are approximate quota percentages, **not precise remaining
+tokens, requests or money**. Zero and unknown differ; missing or invalid quota
+stays unknown. The API does not identify the quota window here: neither a reset
+nearby nor 0% proves five-hour versus weekly quota. Rows are not summed because
+models may share quota. Errors contain safe categories only, never response
+bodies, account identifiers or credential values. Usage errors do not disable
+inference. This feature does not change retries, models, accounts, credits or
+overage settings, and never waits for a future quota window. TUI cancellation
+signals may not be wired to a key; the command's own deadline remains bounded.
+
+Local source changes require a reviewed generated host bundle; a published
+upstream commit pin does not automatically include this local feature. Validate
+an isolated candidate before replacing the active `lib/index.js`.
+
+## Shared inference resilience (local fork)
+
+Claude and Gemini use the same bounded SSE lifecycle. UTF-8 fragments, CR/LF,
+multiline events and final data without a newline are handled explicitly. `[DONE]`
+or EOF is not proof of success: a valid STOP/MAX_TOKENS terminal and actionable
+text/client tool call are required. Stream errors, malformed/truncated payloads,
+policy stops and thought-only responses cannot become successful partial turns.
+Opaque text/thought/tool signatures stay on their correct logical blocks.
+Compatible same-type continuations across SSE events append within a run; an
+explicit thought signature-only delta updates that run instead of producing a
+separate empty signed thought. Distinct parts within one event, candidates,
+types/tools and differing signatures are not blindly merged. A signature alone
+cannot turn an empty/thought-only response into success.
+Limits are 1 MiB per event, 16 MiB per stream, 4,096
+blocks and 64 KiB for HTTP error metadata. `timeoutMs` defaults to 600 seconds;
+caller cancellation, hook deadlines and consumer early-return clean up transport.
+The separate Harness idle watchdog remains unchanged.
+
+Requests explicitly serialize root `enabledCreditTypes: []`, after payload hooks
+and serialization validation. Credit opt-ins and model/account substitutions are
+rejected locally. This is an explicit baseline-only client intent, not a universal
+server billing guarantee. No credit setting, account or model is switched. HTTP
+fallback is limited to a missing endpoint (404); 429/auth/5xx are not retried by
+the provider transport. Request-scoped sanitized failures preserve status and
+validated Retry-After/RetryInfo hints for the official Harness recovery seam.
+Generic 429/RESOURCE_EXHAUSTED/QuotaFailure may mean RPM/TPM, not account quota;
+only known structured exhaustion reasons map to permanent QUOTA_EXCEEDED, and
+the quota window remains unknown. This does not enable waiting for five-hour or
+weekly quota. Partial-output metadata supports recovery diagnostics; actual
+client-tool dispatch belongs to the Harness agent loop. Hosted tools/remote
+effects have no exactly-once guarantee. Mock gates do not certify long-term
+backend stability or real billing behavior.
+
+## Official retry policy and validated local rollout
+
+Optional `retryPolicy` uses the public Harness schema; omission preserves its
+default. The reviewed local profile selects the following **Antigravity-only**
+policy, preserving search/model configuration:
+
+```yaml
+retryPolicy:
+  mode: normal
+  maxRetries: 9
+  backoff:
+    initialDelayMs: 5000
+    maxDelayMs: 1200000
+    jitterRatio: 0.1
+```
+
+Nine retries allow ten attempts. Only the official recovery engine owns waits,
+budgets and cancellation; there is no provider-local retry loop. A valid provider
+hint above the 20-minute cap fails fast in normal mode, rather than being shortened
+or converted into an endless quota wait. Permanent auth/billing/policy failures
+and ambiguous remote effects are not reopened. This is independent of any
+whole-turn self-healing policy; an observed whole-turn budget issue is tracked
+separately in Task43 and is not claimed fixed by this provider rollout.
+
+Local Tasks36/42 validation (2026-10-13): **310 mocked package tests, 26 actual
+Harness/official-retry native-loop cases**, strict TypeScript6.0.3 with 14 generated
+declarations, full external-dependency host bundle and public type-consumer checks
+passed. Separate root contracts76/76 plus grammar configuration and actual public
+profile YAML/wiring checks also passed. Type checks retain the reviewed `skipLibCheck` setting; they do not prove
+every dependency declaration. Tests ran on Node26.10.0; a Node22 build target is
+not an all-LTS-runtime or long-term provider stability certification.
+
+The installed V4 bundle fixes logical signature association. Offline comparison
+uses fake base64 signatures and proves replay shape, not cryptography. Live testing
+on the exact Claude model accepted five coding responses plus a short same-session
+follow-up (six HTTP200 responses). That follow-up replayed one signed logical
+thought plus one text part, with no unsigned thought or empty signed part. Four
+of the five coding responses reached the 16,384-token probe cap: actionable output
+and accepted replay **do not prove complete programs, execution or code correctness**.
+Gemini's corresponding resilience/replay gates were offline, not a live quota burn.
+The prior V3 HTTP400 body was not retained; its actual cause remains unknown.
+
+The bounded sequence stopped at its first real HTTP429 (`RATE_LIMIT`). Its validated
+hint was 373,203,889ms (about 4.32 days), above the normal 1,200,000ms cap, so **zero
+retries** was the correct result. Total carried counters were 18 inference POSTs,
+26 metadata requests and 2 OAuth refreshes, within 32/40/4 and a 45-minute active-work
+budget (about 21 active minutes). No account/model/route/credit rotation occurred;
+root `enabledCreditTypes: []` guards passed. This is observed client intent, not a
+universal billing guarantee. Missing final quota fraction is **unknown, not0%**;
+reset timestamps and this long hint do not identify a five-hour/weekly window.
+Positive recovery after a real reset remains a separate future operational gate.
+
+Only compiler-produced `lib/index.js` changed in V4; the four affected declaration
+files, 21 other library outputs, package metadata and six protected TUI OAuth outputs
+remained intact. Exclusive durable backup/receipt and before/after hash guards support
+single-file rollback that refuses later edits. Rename is atomic for one file, not
+an OS compare-and-swap against simultaneous foreign writers. Historical pins and
+published artifacts were not replaced. Prefer a fresh TUI/worker for reproducible
+SDK/module loading; observed plugin hot-mount does not invalidate an existing SDK
+module cache, nor does process age alone prove which hooks are active. No automatic
+restart was performed. Local detailed evidence is recorded in
+`../../.dumps/antigravity-resilience-20261013/promotion-live-result-v4.md` (gitignored).
 
 ## Security and Credentials
 

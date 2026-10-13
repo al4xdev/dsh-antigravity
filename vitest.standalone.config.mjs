@@ -9,7 +9,7 @@ export default {
   esbuild: { tsconfigRaw: JSON.stringify({ compilerOptions: { experimentalDecorators: false, target: 'ES2022' } }) },
   test: {
     environment: 'node',
-    include: ['tests/search.spec.ts', 'tests/provider.spec.ts', 'tests/credential.spec.ts', 'tests/client-config.spec.ts', 'tests/remote.spec.ts'],
+    include: ['tests/search.spec.ts', 'tests/provider.spec.ts', 'tests/credential.spec.ts', 'tests/client-config.spec.ts', 'tests/remote.spec.ts', 'tests/quota.spec.ts', 'tests/usage.spec.ts', 'tests/failure.spec.ts', 'tests/api-resilience.spec.ts', 'tests/adapter-recovery.spec.ts'],
     testTimeout: 15000,
   },
 };

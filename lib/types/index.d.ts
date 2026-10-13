@@ -1,19 +1,26 @@
 /** Independent Google Anti Gravity provider route and OAuth settings service. */
 import type { Context } from '@deepseek-ai/cordis';
 import z from '@deepseek-ai/schemastery';
+import type { RetryPolicyConfig } from '@deepseek-ai/dsh-llm';
+export { AntiGravityUsageService } from './usage.ts';
+export { AntiGravityAdapter, captureFailureReporter } from './failure-bridge.ts';
+export { AntiGravityFailure } from './failure.ts';
+export type { AntiGravityFailureData, AntiGravityFailureCode, AntiGravityFailureReason } from './failure.ts';
+export { formatUsageSnapshot, parseModelQuotaSnapshot, QuotaPayloadError } from './quota.ts';
+export type { AntiGravityUsageRow, AntiGravityUsageSnapshot, UsageErrorCode } from './quota.ts';
 export { createAntiGravityOAuth } from './auth.ts';
+export { AntiGravitySearchProvider, DEFAULT_SEARCH_MODEL } from './search.ts';
 export { DEFAULT_OAUTH_CLIENT_CONFIG_REF, extractOAuthClientConfig, importInstalledOAuthClientConfig, parseOAuthClientConfig, resolveOAuthClientConfig, } from './client-config.ts';
 export type { AntiGravityOAuthClientConfig } from './client-config.ts';
 export { AntiGravityCredentialManager, parseAntiGravityCredential, } from './credential.ts';
 export { fetchAvailableModels, fetchAvailableModelsForCredential, maintainedModels, parseAvailableModels, PROVIDER, } from './models.ts';
 export { AntiGravityAuthRemote } from './remote-service.ts';
-export { AntiGravitySearchProvider, DEFAULT_SEARCH_MODEL } from './search.ts';
 export type { AntiGravityAuthSnapshot, AntiGravityLoginId, AntiGravityLoginStart, AntiGravityLoginStatus, } from './types.ts';
 export declare const name = "llm-pi-ai-antigravity";
 export declare const inject: string[];
 /** Deployment configuration contains references and paths, never OAuth values. */
 export interface Config {
-    /** Opt-in native Google Search provider registration. */
+    /** Opt-in native Google Search registration; requires the optional web service. */
     webSearch?: boolean;
     /** Exact native search model; no automatic fallback. */
     searchModel?: string;
@@ -27,6 +34,8 @@ export interface Config {
     displayName?: string;
     /** Maximum provider idle time while one stream read is outstanding. */
     streamIdleTimeoutMs?: number;
+    /** Provider-owned request retry policy; omission preserves official defaults. */
+    retryPolicy?: RetryPolicyConfig;
     /**
      * Base64 image payload bound for one request. Older images become text
      * placeholders once a session's accumulated images exceed it, so a long
@@ -46,4 +55,3 @@ export declare const Config: z<Config>;
  * @param rawConfig - validated plugin configuration.
  */
 export declare function apply(ctx: Context, rawConfig: Config): void;
-//# sourceMappingURL=index.d.ts.map
