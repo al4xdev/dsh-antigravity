@@ -48,17 +48,66 @@ function parseAuth(value: string | undefined): AntiGravityAuth {
   if (typeof auth?.token !== 'string' || !auth.token || typeof auth.projectId !== 'string' || !auth.projectId) throw new AntiGravityFailure('AUTH', 'auth')
   return { token: auth.token, projectId: auth.projectId }
 }
+function defaultThinkingConfig(id: string): Record<string, unknown> | undefined {
+  if (id.startsWith('gemini-4-argon-') || id.startsWith('claude-opus-5-5-') || id.startsWith('claude-sonnet-5-5-')) {
+    const level = /-(low|medium|high)$/.exec(id)?.[1]?.toUpperCase()
+    if (level) return { includeThoughts: true, thinkingLevel: level }
+  }
+  if (id === 'gemini-3.8-flash-low') return { includeThoughts: true, thinkingBudget: 1000 }
+  if (id === 'gemini-3.8-flash-medium') return { includeThoughts: true, thinkingBudget: 4000 }
+  if (id === 'gemini-3.8-flash-high') return { includeThoughts: true, thinkingBudget: -1 }
+  return undefined
+}
+function cleanToolId(id: string): string {
+  if (/^[a-zA-Z0-9_-]{1,64}$/.test(id)) return id
+  return id.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 64)
+}
+
+function sanitizeClaudeContents(contents: Array<{ role: string, parts?: Array<Record<string, unknown>> }>): Array<{ role: string, parts?: Array<Record<string, unknown>> }> {
+  return contents.map(entry => {
+    if (!Array.isArray(entry.parts)) return entry
+    const parts: Array<Record<string, unknown>> = []
+    for (const part of entry.parts) {
+      if (part.functionCall !== undefined) {
+        const fc = part.functionCall as Record<string, unknown>
+        const id = typeof fc.id === 'string' ? cleanToolId(fc.id) : fc.id
+        parts.push({ ...part, functionCall: { ...fc, ...id === undefined ? {} : { id } } })
+      } else if (part.functionResponse !== undefined) {
+        const fr = part.functionResponse as Record<string, unknown>
+        const id = typeof fr.id === 'string' ? cleanToolId(fr.id) : fr.id
+        parts.push({ ...part, functionResponse: { ...fr, ...id === undefined ? {} : { id } } })
+      } else if (part.thought === true) {
+        if (typeof part.thoughtSignature === 'string' && part.thoughtSignature.length > 0) {
+          parts.push(part)
+        } else if (typeof part.text === 'string' && part.text.length > 0) {
+          parts.push({ text: part.text })
+        }
+      } else if (typeof part.text === 'string' && part.text.length > 0) {
+        parts.push(part)
+      }
+    }
+    if (parts.length === 0) parts.push({ text: ' ' })
+    return { ...entry, parts }
+  })
+}
+
 function requestBody(model: Model<AntiGravityApi>, context: Context, options: StreamOptions, projectId: string): unknown {
   const transcript = normalizeContext(context)
   const system = getCurrentSystemPrompt(transcript.messages)
   const tools = getCurrentTools(transcript.messages)
-  const request: Record<string, unknown> = { contents: convertMessages(model as unknown as Model<'google-generative-ai'>, transcript), ...options.sessionId === undefined ? {} : { sessionId: options.sessionId } }
+  const rawContents = convertMessages(model as unknown as Model<'google-generative-ai'>, transcript)
+  const contents = model.id.startsWith('claude-') ? sanitizeClaudeContents(rawContents) : rawContents
+  const request: Record<string, unknown> = { contents, ...options.sessionId === undefined ? {} : { sessionId: options.sessionId } }
   if (system) request.systemInstruction = { role: 'user', parts: [{ text: system }] }
   const generationConfig: Record<string, unknown> = {}
   if (options.temperature !== undefined) generationConfig.temperature = options.temperature
   if (options.maxTokens !== undefined) generationConfig.maxOutputTokens = options.maxTokens
-  if (Object.keys(generationConfig).length) request.generationConfig = generationConfig
-  if (tools.length) request.tools = convertTools(tools, model.id.startsWith('claude-'))
+  const thinkingConfig = defaultThinkingConfig(model.id)
+  if (thinkingConfig !== undefined) generationConfig.thinkingConfig = thinkingConfig
+  if (tools.length) {
+    const isLegacyClaude = model.id.startsWith('claude-sonnet-4-') || model.id.startsWith('claude-opus-4-')
+    request.tools = convertTools(tools, isLegacyClaude)
+  }
   return { project: projectId, model: model.id, request, requestType: 'agent', userAgent: 'antigravity', requestId: `agent-${crypto.randomUUID()}`, enabledCreditTypes: [] }
 }
 /** Guard after hooks: no credit opt-in, account substitution or route substitution. */

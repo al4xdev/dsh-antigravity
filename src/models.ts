@@ -21,7 +21,9 @@ function descriptor(
   family: 'gemini' | 'claude' | 'gpt',
   level: 'low' | 'medium' | 'high',
 ): Model<AntiGravityApi> {
-  const contextWindow = family === 'gemini' ? 1_048_576 : family === 'claude' ? 200_000 : 131_072
+  const isClaude55 = id.startsWith('claude-opus-5-5-') || id.startsWith('claude-sonnet-5-5-')
+  const contextWindow = family === 'gemini' ? 1_048_576 : isClaude55 ? 1_000_000 : family === 'claude' ? 200_000 : 131_072
+  const maxTokens = isClaude55 ? 128_000 : 65_536
   return {
     id,
     name,
@@ -41,7 +43,7 @@ function descriptor(
     input: ['text', 'image'],
     cost: NO_COST,
     contextWindow,
-    maxTokens: 65_536,
+    maxTokens,
   }
 }
 
@@ -82,7 +84,9 @@ function discoveredModel(id: string, entry: { displayName?: unknown }): Model<An
   const family = familyOfId(id)
   const level = levelOfId(id)
   const name = typeof entry.displayName === 'string' && entry.displayName.length > 0 ? entry.displayName : titleOfId(id)
-  const contextWindow = family === 'gemini' ? 1_048_576 : family === 'claude' ? 200_000 : 131_072
+  const isClaude55 = id.startsWith('claude-opus-5-5-') || id.startsWith('claude-sonnet-5-5-')
+  const contextWindow = family === 'gemini' ? 1_048_576 : isClaude55 ? 1_000_000 : family === 'claude' ? 200_000 : 131_072
+  const maxTokens = isClaude55 ? 128_000 : 65_536
   return {
     id,
     name,
@@ -102,12 +106,15 @@ function discoveredModel(id: string, entry: { displayName?: unknown }): Model<An
     input: ['text', 'image'],
     cost: NO_COST,
     contextWindow,
-    maxTokens: 65_536,
+    maxTokens,
   }
 }
 
 /** Reviewed descriptors; the account-visible catalog is always reconciled online before display. */
 export const maintainedModels: readonly Model<AntiGravityApi>[] = [
+  descriptor('gemini-4-argon-high', 'Gemini 4 Argon (High)', 'gemini', 'high'),
+  descriptor('gemini-4-argon-medium', 'Gemini 4 Argon (Medium)', 'gemini', 'medium'),
+  descriptor('gemini-4-argon-low', 'Gemini 4 Argon (Low)', 'gemini', 'low'),
   descriptor('gemini-3.8-flash-high', 'Gemini 3.8 Flash (High)', 'gemini', 'high'),
   descriptor('gemini-3.8-flash-medium', 'Gemini 3.8 Flash (Medium)', 'gemini', 'medium'),
   descriptor('gemini-3.8-flash-low', 'Gemini 3.8 Flash (Low)', 'gemini', 'low'),
@@ -122,6 +129,12 @@ export const maintainedModels: readonly Model<AntiGravityApi>[] = [
   descriptor('gemini-3.5-flash-low', 'Gemini 3.5 Flash (Low)', 'gemini', 'low'),
   descriptor('gemini-3.1-pro-high', 'Gemini 3.1 Pro (High)', 'gemini', 'high'),
   descriptor('gemini-3.1-pro-low', 'Gemini 3.1 Pro (Low)', 'gemini', 'low'),
+  descriptor('claude-opus-5-5-high', 'Claude Opus 5.5 (High)', 'claude', 'high'),
+  descriptor('claude-opus-5-5-medium', 'Claude Opus 5.5 (Medium)', 'claude', 'medium'),
+  descriptor('claude-opus-5-5-low', 'Claude Opus 5.5 (Low)', 'claude', 'low'),
+  descriptor('claude-sonnet-5-5-high', 'Claude Sonnet 5.5 (High)', 'claude', 'high'),
+  descriptor('claude-sonnet-5-5-medium', 'Claude Sonnet 5.5 (Medium)', 'claude', 'medium'),
+  descriptor('claude-sonnet-5-5-low', 'Claude Sonnet 5.5 (Low)', 'claude', 'low'),
   descriptor('claude-sonnet-4-6', 'Claude Sonnet 4.6 (Thinking)', 'claude', 'high'),
   descriptor('claude-opus-4-6-thinking', 'Claude Opus 4.6 (Thinking)', 'claude', 'high'),
   descriptor('gpt-oss-120b-medium', 'GPT-OSS 120B (Medium)', 'gpt', 'medium'),
