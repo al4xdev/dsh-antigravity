@@ -64,8 +64,9 @@ function cleanToolId(id: string): string {
 }
 
 function sanitizeClaudeContents(contents: Array<{ role: string, parts?: Array<Record<string, unknown>> }>): Array<{ role: string, parts?: Array<Record<string, unknown>> }> {
-  return contents.map(entry => {
-    if (!Array.isArray(entry.parts)) return entry
+  const sanitizedEntries: Array<{ role: string, parts: Array<Record<string, unknown>> }> = []
+  for (const entry of contents) {
+    if (!Array.isArray(entry.parts) || entry.parts.length === 0) continue
     const parts: Array<Record<string, unknown>> = []
     for (const part of entry.parts) {
       if (part.functionCall !== undefined) {
@@ -79,16 +80,30 @@ function sanitizeClaudeContents(contents: Array<{ role: string, parts?: Array<Re
       } else if (part.thought === true) {
         if (typeof part.thoughtSignature === 'string' && part.thoughtSignature.length > 0) {
           parts.push(part)
-        } else if (typeof part.text === 'string' && part.text.length > 0) {
+        } else if (typeof part.text === 'string' && part.text.trim().length > 0) {
           parts.push({ text: part.text })
         }
-      } else if (typeof part.text === 'string' && part.text.length > 0) {
+      } else if (typeof part.text === 'string' && part.text.trim().length > 0) {
+        parts.push(part)
+      } else if (part.inlineData !== undefined) {
         parts.push(part)
       }
     }
-    if (parts.length === 0) parts.push({ text: ' ' })
-    return { ...entry, parts }
-  })
+    if (parts.length === 0) continue
+    const prev = sanitizedEntries[sanitizedEntries.length - 1]
+    if (prev && prev.role === entry.role) {
+      prev.parts.push(...parts)
+    } else {
+      sanitizedEntries.push({ role: entry.role, parts })
+    }
+  }
+
+  // Claude does not support assistant message prefill: the conversation must end with a user turn
+  while (sanitizedEntries.length > 0 && sanitizedEntries[sanitizedEntries.length - 1].role === 'model') {
+    sanitizedEntries.pop()
+  }
+
+  return sanitizedEntries.length === 0 ? [{ role: 'user', parts: [{ text: 'continue' }] }] : sanitizedEntries
 }
 
 function requestBody(model: Model<AntiGravityApi>, context: Context, options: StreamOptions, projectId: string): unknown {
@@ -347,7 +362,7 @@ export function streamAntiGravity(model: Model<AntiGravityApi>, context: Context
           const prompt = counter('promptTokenCount'), cached = counter('cachedContentTokenCount'), candidates = counter('candidatesTokenCount'), thoughts = counter('thoughtsTokenCount'), total = counter('totalTokenCount')
           if (cached > prompt || !Number.isSafeInteger(candidates + thoughts)) throw protocol()
           output.usage = { input: prompt - cached, output: candidates + thoughts, reasoning: thoughts, cacheRead: cached, cacheWrite: 0, totalTokens: total, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }
-          calculateCost(model, output.usage)
+          if (model.cost) calculateCost(model, output.usage)
         }
       }
       const dispatch = (): void => {
