@@ -79,7 +79,8 @@ function sanitizeClaudeContents(contents: Array<{ role: string, parts?: Array<Re
         parts.push({ ...part, functionResponse: { ...fr, ...id === undefined ? {} : { id } } })
       } else if (part.thought === true) {
         if (typeof part.thoughtSignature === 'string' && part.thoughtSignature.length > 0) {
-          parts.push(part)
+          const text = typeof part.text === 'string' && part.text.length > 0 ? part.text : undefined
+          parts.push({ ...part, ...text === undefined ? {} : { text } })
         } else if (typeof part.text === 'string' && part.text.trim().length > 0) {
           parts.push({ text: part.text })
         }
