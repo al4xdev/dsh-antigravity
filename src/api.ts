@@ -78,11 +78,12 @@ function sanitizeClaudeContents(contents: Array<{ role: string, parts?: Array<Re
         const id = typeof fr.id === 'string' ? cleanToolId(fr.id) : fr.id
         parts.push({ ...part, functionResponse: { ...fr, ...id === undefined ? {} : { id } } })
       } else if (part.thought === true) {
-        if (typeof part.thoughtSignature === 'string' && part.thoughtSignature.length > 0) {
-          const text = typeof part.text === 'string' && part.text.length > 0 ? part.text : undefined
-          parts.push({ ...part, ...text === undefined ? {} : { text } })
-        } else if (typeof part.text === 'string' && part.text.trim().length > 0) {
-          parts.push({ text: part.text })
+        if (typeof part.text === 'string' && part.text.trim().length > 0) {
+          if (typeof part.thoughtSignature === 'string' && part.thoughtSignature.length > 0) {
+            parts.push(part)
+          } else {
+            parts.push({ text: part.text })
+          }
         }
       } else if (typeof part.text === 'string' && part.text.trim().length > 0) {
         parts.push(part)

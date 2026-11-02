@@ -142,6 +142,40 @@ for (const model of models) describe(`shared resilience ${model.id}`, () => {
     const result = await streamAntiGravity(model, context, { ...options, onPayload: payload => ({ ...payload as object, harmless: 'fixture' }) }).result()
     expect(result.stopReason).toBe('stop')
   })
+  it('drops empty signed thought blocks for Claude models to satisfy Anthropic schema', async () => {
+    if (!model.id.startsWith('claude-')) return
+    let capturedPayload: unknown
+    const fetch = vi.fn(async (_url, init) => {
+      capturedPayload = JSON.parse(init.body)
+      return response(sse(event([{ text: 'ok' }], 'STOP')))
+    })
+    vi.stubGlobal('fetch', fetch)
+    const claudeContext: Context = {
+      messages: [
+        { role: 'user', content: 'hello', timestamp: 1 },
+        {
+          role: 'assistant',
+          content: [
+            { type: 'thinking', thinking: '', thinkingSignature: 'c2lnbmF0dXJl' },
+            { type: 'text', text: 'response' }
+          ],
+          api: model.api,
+          provider: model.provider,
+          model: model.id,
+          usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+          stopReason: 'stop',
+          timestamp: 2
+        },
+        { role: 'user', content: 'continue', timestamp: 3 }
+      ]
+    }
+    const result = await streamAntiGravity(model, claudeContext, options).result()
+    expect(result.stopReason).toBe('stop')
+    const contents = (capturedPayload as { request: { contents: Array<{ role: string, parts: Array<Record<string, unknown>> }> } }).request.contents
+    const modelTurn = contents.find(c => c.role === 'model')
+    expect(modelTurn?.parts.some(p => p.thought === true)).toBe(false)
+    expect(modelTurn?.parts).toEqual([{ text: 'response' }])
+  })
   it.each([['enabledCreditTypes', ['PAID']], ['enabledCreditTypes', 'malformed'], ['model', 'different-model'], ['project', 'other-project'], ['useCredits', true]])('rejects post-hook override %s before HTTP', async (key, value) => {
     const fetch = vi.fn(); vi.stubGlobal('fetch', fetch)
     await streamAntiGravity(model, context, { ...options, onPayload: payload => ({ ...payload as object, [key]: value }) }).result()
