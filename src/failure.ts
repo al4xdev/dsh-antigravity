@@ -1,6 +1,6 @@
 /** Provider-owned, sanitized failures; no backend text or payload crosses this boundary. */
-export type AntiGravityFailureReason = 'rate-limit' | 'quota' | 'auth' | 'billing' | 'policy' | 'server' | 'transport' | 'timeout' | 'aborted' | 'empty' | 'protocol'
-export type AntiGravityFailureCode = 'RATE_LIMIT' | 'QUOTA_EXCEEDED' | 'AUTH' | 'INVALID_REQUEST' | 'SERVER' | 'TRANSPORT' | 'TIMEOUT' | 'ABORTED' | 'EMPTY_RESPONSE' | 'PI_AI_ERROR'
+export type AntiGravityFailureReason = 'rate-limit' | 'quota' | 'auth' | 'billing' | 'policy' | 'server' | 'transport' | 'timeout' | 'aborted' | 'empty' | 'protocol' | 'context-window'
+export type AntiGravityFailureCode = 'RATE_LIMIT' | 'QUOTA_EXCEEDED' | 'AUTH' | 'INVALID_REQUEST' | 'SERVER' | 'TRANSPORT' | 'TIMEOUT' | 'ABORTED' | 'EMPTY_RESPONSE' | 'PI_AI_ERROR' | 'CONTEXT_WINDOW_EXCEEDED'
 export type AntiGravityFailurePhase = 'auth' | 'payload-hook' | 'payload-guard' | 'response-hook' | 'fetch' | 'http-error' | 'sse-error' | 'sse-terminal' | 'sse' | 'timeout' | 'cancelled'
 export type AntiGravityTerminalCategory = 'blocked' | 'other' | 'malformed-function-call' | 'unknown'
 export type AntiGravityTerminalReason = 'SAFETY' | 'RECITATION' | 'LANGUAGE' | 'BLOCKLIST' | 'PROHIBITED_CONTENT' | 'SPII'
@@ -25,7 +25,7 @@ const messages: Record<AntiGravityFailureReason, string> = {
   policy: 'Anti Gravity rejected this request by policy.', server: 'Anti Gravity service is unavailable.',
   transport: 'Anti Gravity response transport was incomplete.', timeout: 'Anti Gravity request timed out.',
   aborted: 'Anti Gravity request was cancelled.', empty: 'Anti Gravity returned no actionable response.',
-  protocol: 'Anti Gravity returned an invalid response.',
+  protocol: 'Anti Gravity returned an invalid response.', 'context-window': 'Anti Gravity request exceeded the model context window.',
 }
 export class AntiGravityFailure extends Error {
   readonly failure: AntiGravityFailureData
@@ -94,6 +94,26 @@ function details(payload: unknown): Record<string, unknown>[] {
   const list = errorRecord(payload)?.details
   return Array.isArray(list) ? list.slice(0, 64).flatMap(item => record(item) ? [record(item)!] : []) : []
 }
+function extractErrorTexts(payload: unknown): string[] {
+  const texts: string[] = []
+  const error = errorRecord(payload)
+  if (typeof error?.message === 'string') {
+    texts.push(error.message)
+    try {
+      const parsed = record(JSON.parse(error.message))
+      const inner = record(parsed?.error) ?? parsed
+      if (typeof inner?.message === 'string') texts.push(inner.message)
+    } catch {}
+  }
+  return texts
+}
+function isContextOverflowText(text: string): boolean {
+  return /\bprompt\s+is\s+too\s+long\b/i.test(text)
+    || /\b(?:input|prompt|request|messages?)\s+(?:is\s+|are\s+)?too\s+(?:long|large)\b/i.test(text)
+    || /\b(?:context\s+(?:length|window)|max(?:imum)?\s+context)\b/i.test(text)
+    || /\bexceed(?:s|ed)?\s+(?:the\s+)?(?:maximum\s+)?(?:allowed\s+)?context\b/i.test(text)
+    || /\btoo\s+(?:long|large)\s+for\s+(?:the|this)?\s*model\b/i.test(text)
+}
 export function parseRetryInfoDelayMs(payload: unknown): number | undefined {
   const hints = details(payload).filter(item => item['@type'] === 'type.googleapis.com/google.rpc.RetryInfo')
     .flatMap(item => { const delay = durationMs(item.retryDelay); return delay === undefined ? [] : [delay] })
@@ -118,6 +138,10 @@ export function parseAntiGravityFailure(status: number | undefined, payload: unk
   if (status === 401 || status === 403) return new AntiGravityFailure('AUTH', 'auth', options)
   if (status === 402 || reasons.some(reason => ['BILLING_DISABLED', 'BILLING_NOT_ENABLED', 'CREDITS_EXHAUSTED'].includes(reason))) return new AntiGravityFailure('INVALID_REQUEST', 'billing', options)
   if (reasons.some(reason => ['POLICY_VIOLATION', 'TOS_NOT_ACCEPTED', 'ACCESS_DENIED'].includes(reason))) return new AntiGravityFailure('INVALID_REQUEST', 'policy', options)
+  if (reasons.some(reason => ['CONTEXT_WINDOW_EXCEEDED', 'INPUT_TOKENS_EXCEEDED', 'MAX_TOKENS_EXCEEDED'].includes(reason))
+    || extractErrorTexts(payload).some(isContextOverflowText)) {
+    return new AntiGravityFailure('CONTEXT_WINDOW_EXCEEDED', 'context-window', options)
+  }
   // QuotaFailure also represents RPM/TPM limits; it does not prove account exhaustion.
   if (reasons.includes('RATE_LIMIT_EXCEEDED')) return new AntiGravityFailure('RATE_LIMIT', 'rate-limit', options)
   if (reasons.some(reason => ['QUOTA_EXCEEDED', 'ACCOUNT_QUOTA_EXCEEDED', 'ACCOUNT_LIMIT_EXCEEDED'].includes(reason))) {

@@ -45,6 +45,23 @@ describe('sanitized provider failure', () => {
     expect(error.code).toBe('RATE_LIMIT')
     expect(new AntiGravityFailure('SERVER', 'server', { status: 999, providerRetryAfterMs: Infinity }).failure).not.toHaveProperty('status')
   })
+  it.each([
+    'prompt is too long: 1115970 tokens > 1000000 maximum',
+    JSON.stringify({ type: 'error', error: { type: 'invalid_request_error', message: 'prompt is too long: 1115970 tokens > 1000000 maximum' } }),
+    'The request exceeds the maximum context length of 1048576 tokens',
+  ])('classifies context window overflow without leaking backend text: %j', message => {
+    const error = parseAntiGravityFailure(400, { error: { message: `${message} private-token` } })
+    expect(error.code).toBe('CONTEXT_WINDOW_EXCEEDED')
+    expect(error.failure.reason).toBe('context-window')
+    expect(error.message).toContain('Anti Gravity request exceeded the model context window.')
+    expect(JSON.stringify(error.failure)).not.toContain('private')
+    expect(JSON.stringify(error.failure)).not.toContain('1115970')
+  })
+  it('recognizes structured CONTEXT_WINDOW_EXCEEDED reason', () => {
+    const error = parseAntiGravityFailure(400, info('CONTEXT_WINDOW_EXCEEDED'))
+    expect(error.code).toBe('CONTEXT_WINDOW_EXCEEDED')
+    expect(error.failure.reason).toBe('context-window')
+  })
 })
 describe('retry hints units and skew', () => {
   it.each([['120', 120000], [' 5 ', 5000], ['0', undefined], ['-1', undefined], ['0.5', undefined], ['NaN', undefined], ['Infinity', undefined], ['99999999999999999', undefined]])('parses HTTP delay %s', (value, expected) => expect(parseRetryAfterMs(value as string)).toBe(expected))
