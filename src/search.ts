@@ -4,7 +4,7 @@ import { antiGravityHeaders } from './auth.ts'
 import type { AntiGravityCredentialManager } from './credential.ts'
 import { ENDPOINTS } from './models.ts'
 
-export const DEFAULT_SEARCH_MODEL = 'gemini-3.8-flash-low'
+export const DEFAULT_SEARCH_MODEL = 'gemini-4-hydrogen-low'
 const TIMEOUT_MS = 60_000
 const MAX_STREAM_BYTES = 2 * 1024 * 1024
 const MAX_CONTENT_CHARS = 128 * 1024

@@ -9,9 +9,13 @@ export type AntiGravityApi = 'google-antigravity'
 export const PROVIDER = 'google-antigravity'
 /** Cloud Code Assist endpoints in provider-preferred fallback order. */
 export const ENDPOINTS = [
+  // ANTIGRAVITY_BASE_URL prepends a local recorder (tools/antigravity-proxy); the real
+  // hosts stay behind it, so a proxy that is not running costs one failed connect and
+  // the next endpoint answers. No other code path needs to know the proxy exists.
+  process.env.ANTIGRAVITY_BASE_URL?.replace(/\/+$/, ''),
   'https://daily-cloudcode-pa.googleapis.com',
   'https://cloudcode-pa.googleapis.com',
-] as const
+].filter((endpoint): endpoint is string => typeof endpoint === 'string' && endpoint.length > 0)
 
 const NO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
 
@@ -115,9 +119,10 @@ export const maintainedModels: readonly Model<AntiGravityApi>[] = [
   descriptor('gemini-4-argon-high', 'Gemini 4 Argon (High)', 'gemini', 'high'),
   descriptor('gemini-4-argon-medium', 'Gemini 4 Argon (Medium)', 'gemini', 'medium'),
   descriptor('gemini-4-argon-low', 'Gemini 4 Argon (Low)', 'gemini', 'low'),
-  descriptor('gemini-3.8-flash-high', 'Gemini 3.8 Flash (High)', 'gemini', 'high'),
-  descriptor('gemini-3.8-flash-medium', 'Gemini 3.8 Flash (Medium)', 'gemini', 'medium'),
-  descriptor('gemini-3.8-flash-low', 'Gemini 3.8 Flash (Low)', 'gemini', 'low'),
+  descriptor('gemini-4-hydrogen-high', 'Gemini 4 Hydrogen (High)', 'gemini', 'high'),
+  descriptor('gemini-4-hydrogen-medium', 'Gemini 4 Hydrogen (Medium)', 'gemini', 'medium'),
+  descriptor('gemini-4-hydrogen-low', 'Gemini 4 Hydrogen (Low)', 'gemini', 'low'),
+  // 3.8 Flash is gone from the account catalog; it was Hydrogen's predecessor.
   descriptor('gemini-3.7-flash-high', 'Gemini 3.7 Flash (High)', 'gemini', 'high'),
   descriptor('gemini-3.7-flash-medium', 'Gemini 3.7 Flash (Medium)', 'gemini', 'medium'),
   descriptor('gemini-3.7-flash-low', 'Gemini 3.7 Flash (Low)', 'gemini', 'low'),
@@ -127,6 +132,9 @@ export const maintainedModels: readonly Model<AntiGravityApi>[] = [
   descriptor('gemini-3.5-flash-high', 'Gemini 3.5 Flash (High)', 'gemini', 'high'),
   descriptor('gemini-3.5-flash-medium', 'Gemini 3.5 Flash (Medium)', 'gemini', 'medium'),
   descriptor('gemini-3.5-flash-low', 'Gemini 3.5 Flash (Low)', 'gemini', 'low'),
+  // No reviewed tier suffix: `levelOfId` finds none, so every effort stays exposed
+  // rather than hiding one we have not seen the account advertise.
+  descriptor('gemini-3.5-flash-lite', 'Gemini 3.5 Flash Lite', 'gemini', 'medium'),
   descriptor('gemini-3.1-pro-high', 'Gemini 3.1 Pro (High)', 'gemini', 'high'),
   descriptor('gemini-3.1-pro-low', 'Gemini 3.1 Pro (Low)', 'gemini', 'low'),
   descriptor('claude-opus-5-5-high', 'Claude Opus 5.5 (High)', 'claude', 'high'),

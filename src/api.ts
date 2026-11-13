@@ -49,10 +49,12 @@ function parseAuth(value: string | undefined): AntiGravityAuth {
   return { token: auth.token, projectId: auth.projectId }
 }
 function defaultThinkingConfig(id: string): Record<string, unknown> | undefined {
-  if (id.startsWith('gemini-4-argon-') || id.startsWith('claude-opus-5-5-') || id.startsWith('claude-sonnet-5-5-')) {
+  if (id.startsWith('gemini-4-argon-') || id.startsWith('gemini-4-hydrogen-')
+    || id.startsWith('claude-opus-5-5-') || id.startsWith('claude-sonnet-5-5-')) {
     const level = /-(low|medium|high)$/.exec(id)?.[1]?.toUpperCase()
     if (level) return { includeThoughts: true, thinkingLevel: level }
   }
+  // 3.8 Flash is retired from the catalog; the mapping stays for a session still pinned to it.
   if (id === 'gemini-3.8-flash-low') return { includeThoughts: true, thinkingBudget: 1000 }
   if (id === 'gemini-3.8-flash-medium') return { includeThoughts: true, thinkingBudget: 4000 }
   if (id === 'gemini-3.8-flash-high') return { includeThoughts: true, thinkingBudget: -1 }
