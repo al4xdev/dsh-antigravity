@@ -19,11 +19,21 @@ export const ENDPOINTS = [
 
 const NO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
 
+/** Effort tiers the provider can express through `thinkingConfig`; `all` exposes the
+ * four Gemini families accept without pinning one. */
+type EffortLevel = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+
+function thinkingLevelMapFor(level: EffortLevel | 'all'): Record<string, string | null> {
+  const levels: EffortLevel[] = ['minimal', 'low', 'medium', 'high', 'xhigh']
+  const exposed = level === 'all' ? levels.slice(0, 4) : [level]
+  return Object.fromEntries(levels.map(entry => [entry, exposed.includes(entry) ? entry : null]))
+}
+
 function descriptor(
   id: string,
   name: string,
   family: 'gemini' | 'claude' | 'gpt',
-  level: 'low' | 'medium' | 'high',
+  level: EffortLevel | 'all',
 ): Model<AntiGravityApi> {
   const isClaude55 = id.startsWith('claude-opus-5-5-') || id.startsWith('claude-sonnet-5-5-')
   const contextWindow = family === 'gemini' ? 1_048_576 : isClaude55 ? 1_000_000 : family === 'claude' ? 200_000 : 131_072
@@ -35,15 +45,7 @@ function descriptor(
     provider: PROVIDER,
     baseUrl: ENDPOINTS[0],
     reasoning: true,
-    thinkingLevelMap: {
-      off: null,
-      minimal: null,
-      low: level === 'low' ? 'low' : null,
-      medium: level === 'medium' ? 'medium' : null,
-      high: level === 'high' ? 'high' : null,
-      xhigh: null,
-      max: null,
-    },
+    thinkingLevelMap: { off: null, ...thinkingLevelMapFor(level), max: null },
     input: ['text', 'image'],
     cost: NO_COST,
     contextWindow,
@@ -61,8 +63,8 @@ function familyOfId(id: string): 'gemini' | 'claude' | 'gpt' | undefined {
 }
 
 /** Effort tier encoded in the id suffix, e.g. `gemini-4.0-flash-high`. */
-function levelOfId(id: string): 'low' | 'medium' | 'high' | undefined {
-  const match = /-(low|medium|high)$/.exec(id)
+function levelOfId(id: string): EffortLevel | undefined {
+  const match = /-(minimal|low|medium|high|xhigh)$/.exec(id)
   if (match === null) return undefined
   return match[1] as 'low' | 'medium' | 'high'
 }
@@ -119,6 +121,7 @@ export const maintainedModels: readonly Model<AntiGravityApi>[] = [
   descriptor('gemini-4-argon-high', 'Gemini 4 Argon (High)', 'gemini', 'high'),
   descriptor('gemini-4-argon-medium', 'Gemini 4 Argon (Medium)', 'gemini', 'medium'),
   descriptor('gemini-4-argon-low', 'Gemini 4 Argon (Low)', 'gemini', 'low'),
+  descriptor('gemini-4-hydrogen-xhigh', 'Gemini 4 Hydrogen (Extra High)', 'gemini', 'xhigh'),
   descriptor('gemini-4-hydrogen-high', 'Gemini 4 Hydrogen (High)', 'gemini', 'high'),
   descriptor('gemini-4-hydrogen-medium', 'Gemini 4 Hydrogen (Medium)', 'gemini', 'medium'),
   descriptor('gemini-4-hydrogen-low', 'Gemini 4 Hydrogen (Low)', 'gemini', 'low'),
@@ -132,8 +135,9 @@ export const maintainedModels: readonly Model<AntiGravityApi>[] = [
   descriptor('gemini-3.5-flash-high', 'Gemini 3.5 Flash (High)', 'gemini', 'high'),
   descriptor('gemini-3.5-flash-medium', 'Gemini 3.5 Flash (Medium)', 'gemini', 'medium'),
   descriptor('gemini-3.5-flash-low', 'Gemini 3.5 Flash (Low)', 'gemini', 'low'),
-  // No reviewed tier suffix: `levelOfId` finds none, so every effort stays exposed
-  // rather than hiding one we have not seen the account advertise.
+  // The provider serves one id and accepts minimal/low/medium/high for it (pi-ai's
+  // catalog agrees), but this adapter expresses effort through the id, so one level is
+  // pinned here and `defaultThinkingConfig` sends exactly that one.
   descriptor('gemini-3.5-flash-lite', 'Gemini 3.5 Flash Lite', 'gemini', 'medium'),
   descriptor('gemini-3.1-pro-high', 'Gemini 3.1 Pro (High)', 'gemini', 'high'),
   descriptor('gemini-3.1-pro-low', 'Gemini 3.1 Pro (Low)', 'gemini', 'low'),

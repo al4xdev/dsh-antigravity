@@ -48,16 +48,16 @@ function parseAuth(value: string | undefined): AntiGravityAuth {
   if (typeof auth?.token !== 'string' || !auth.token || typeof auth.projectId !== 'string' || !auth.projectId) throw new AntiGravityFailure('AUTH', 'auth')
   return { token: auth.token, projectId: auth.projectId }
 }
-function defaultThinkingConfig(id: string): Record<string, unknown> | undefined {
-  if (id.startsWith('gemini-4-argon-') || id.startsWith('gemini-4-hydrogen-')
-    || id.startsWith('claude-opus-5-5-') || id.startsWith('claude-sonnet-5-5-')) {
-    const level = /-(low|medium|high)$/.exec(id)?.[1]?.toUpperCase()
-    if (level) return { includeThoughts: true, thinkingLevel: level }
-  }
-  // 3.8 Flash is retired from the catalog; the mapping stays for a session still pinned to it.
-  if (id === 'gemini-3.8-flash-low') return { includeThoughts: true, thinkingBudget: 1000 }
-  if (id === 'gemini-3.8-flash-medium') return { includeThoughts: true, thinkingBudget: 4000 }
-  if (id === 'gemini-3.8-flash-high') return { includeThoughts: true, thinkingBudget: -1 }
+/**
+ * Effort is not a request parameter in this adapter contract: pi-ai's `StreamOptions`
+ * carries temperature, maxTokens and cache settings, no reasoning effort. The harness
+ * expresses effort by choosing a model id, so the descriptor's level map is the source
+ * of truth — exactly one non-null level means one provider string to send.
+ */
+function defaultThinkingConfig(model: { id: string, thinkingLevelMap?: Record<string, string | null> | null }): Record<string, unknown> | undefined {
+  const id = model.id
+  const mapped = Object.entries(model.thinkingLevelMap ?? {}).filter(([level, value]) => level !== 'off' && typeof value === 'string' && value.length > 0)
+  if (mapped.length === 1) return { includeThoughts: true, thinkingLevel: String(mapped[0][1]).toUpperCase() }
   return undefined
 }
 function cleanToolId(id: string): string {
@@ -121,7 +121,7 @@ function requestBody(model: Model<AntiGravityApi>, context: Context, options: St
   const generationConfig: Record<string, unknown> = {}
   if (options.temperature !== undefined) generationConfig.temperature = options.temperature
   if (options.maxTokens !== undefined) generationConfig.maxOutputTokens = options.maxTokens
-  const thinkingConfig = defaultThinkingConfig(model.id)
+  const thinkingConfig = defaultThinkingConfig(model)
   if (thinkingConfig !== undefined) generationConfig.thinkingConfig = thinkingConfig
   if (tools.length) {
     const isLegacyClaude = model.id.startsWith('claude-sonnet-4-') || model.id.startsWith('claude-opus-4-')
