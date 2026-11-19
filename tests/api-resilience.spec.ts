@@ -6,7 +6,10 @@ import { streamAntiGravity, MAX_SSE_EVENT_BYTES, MAX_INFERENCE_STREAM_BYTES, MAX
 import { parseAvailableModels } from '../src/models.ts'
 import type { AntiGravityFailureData } from '../src/failure.ts'
 const observed = vi.hoisted(() => ({ failures: [] as AntiGravityFailureData[] }))
-vi.mock('../src/failure-bridge.ts', () => ({ captureFailureReporter: () => (failure: AntiGravityFailureData) => observed.failures.push(failure) }))
+vi.mock('../src/failure-bridge.ts', () => ({
+  captureFailureReporter: () => (failure: AntiGravityFailureData) => observed.failures.push(failure),
+  captureVideoRequestContext: () => undefined,
+}))
 const ids = ['claude-opus-5-5-high', 'gemini-3.8-flash-low']
 const models = parseAvailableModels({ models: Object.fromEntries(ids.map(id => [id, { displayName: id }])) })
 const context = { messages: [{ role: 'user' as const, content: 'offline fixture', timestamp: 1 }] }

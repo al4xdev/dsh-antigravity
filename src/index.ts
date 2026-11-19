@@ -26,7 +26,23 @@ import { AntiGravityUsageService, registerUsageCommand } from './usage.ts'
 import { AntiGravityAdapter } from './failure-bridge.ts'
 import { MAX_QUOTA_WAIT_MS, QUOTA_RESET_RETRY_CODE, resolveQuotaResetRetry } from './quota-retry.ts'
 import type { QuotaResetRetryConfig, ResolvedQuotaResetRetry } from './quota-retry.ts'
+import {
+  DEFAULT_MAX_REQUEST_VIDEO_BYTES,
+  injectInlineVideos,
+  isVideoCapableGeminiModel,
+  parseVideoAttachmentMarker,
+  READ_VIDEO_TOOL_NAME,
+  registerReadVideoTool,
+} from './video.ts'
 
+export {
+  DEFAULT_MAX_REQUEST_VIDEO_BYTES,
+  injectInlineVideos,
+  isVideoCapableGeminiModel,
+  parseVideoAttachmentMarker,
+  READ_VIDEO_TOOL_NAME,
+  registerReadVideoTool,
+} from './video.ts'
 export { AntiGravityUsageService } from './usage.ts'
 export { AntiGravityAdapter, captureFailureReporter } from './failure-bridge.ts'
 export { AntiGravityFailure } from './failure.ts'
@@ -105,6 +121,8 @@ export interface Config {
   requestImagePixelBudget?: number
   /** Raw encoded-byte cap for each deterministic inline request version. */
   requestImageMaxBytes?: number
+  /** Raw byte budget for inline video attachments sent to Gemini models in one request. */
+  maxRequestVideoBytes?: number
 }
 
 /** Schemastery validator for the independent Anti Gravity route. */
@@ -124,6 +142,7 @@ export const Config: z<Config> = z.object({
   maxRequestImageBytes: z.number().step(1).min(1).default(DEFAULT_MAX_REQUEST_IMAGE_BYTES),
   requestImagePixelBudget: z.number().step(1).min(1).default(DEFAULT_REQUEST_IMAGE_PIXEL_BUDGET),
   requestImageMaxBytes: z.number().step(1).min(1).default(DEFAULT_REQUEST_IMAGE_MAX_BYTES),
+  maxRequestVideoBytes: z.number().step(1).min(1).default(DEFAULT_MAX_REQUEST_VIDEO_BYTES),
 })
 
 interface ResolvedConfig {
@@ -139,6 +158,7 @@ interface ResolvedConfig {
   readonly maxRequestImageBytes: number
   readonly requestImagePixelBudget: number
   readonly requestImageMaxBytes: number
+  readonly maxRequestVideoBytes: number
 }
 
 function resolveConfig(config: Config): ResolvedConfig {
@@ -149,6 +169,7 @@ function resolveConfig(config: Config): ResolvedConfig {
   const maxRequestImageBytes = config.maxRequestImageBytes ?? DEFAULT_MAX_REQUEST_IMAGE_BYTES
   const requestImagePixelBudget = config.requestImagePixelBudget ?? DEFAULT_REQUEST_IMAGE_PIXEL_BUDGET
   const requestImageMaxBytes = config.requestImageMaxBytes ?? DEFAULT_REQUEST_IMAGE_MAX_BYTES
+  const maxRequestVideoBytes = config.maxRequestVideoBytes ?? DEFAULT_MAX_REQUEST_VIDEO_BYTES
   if (displayName.length === 0) throw new Error('llm-pi-ai-antigravity: displayName must not be empty')
   if (!Number.isFinite(streamIdleTimeoutMs)
     || streamIdleTimeoutMs <= 0
@@ -165,6 +186,9 @@ function resolveConfig(config: Config): ResolvedConfig {
   }
   if (!Number.isSafeInteger(requestImageMaxBytes) || requestImageMaxBytes <= 0) {
     throw new Error('llm-pi-ai-antigravity: requestImageMaxBytes must be a positive safe integer')
+  }
+  if (!Number.isSafeInteger(maxRequestVideoBytes) || maxRequestVideoBytes <= 0) {
+    throw new Error('llm-pi-ai-antigravity: maxRequestVideoBytes must be a positive safe integer')
   }
   const quotaResetRetry = resolveQuotaResetRetry(config.quotaResetRetry)
   const basePolicy = resolveRetryPolicy(config.retryPolicy, 'llm-pi-ai-antigravity: retryPolicy')
@@ -188,6 +212,7 @@ function resolveConfig(config: Config): ResolvedConfig {
     maxRequestImageBytes,
     requestImagePixelBudget,
     requestImageMaxBytes,
+    maxRequestVideoBytes,
   }
 }
 
@@ -277,6 +302,8 @@ export function apply(ctx: Context, rawConfig: Config): void {
     resolveAttachments: () => ctx.get('attachments'),
   })
   adapter.configureQuotaRecovery(usage, config.quotaResetRetry)
+  adapter.configureVideoAttachments(() => ctx.get('attachments'), config.maxRequestVideoBytes)
+  registerReadVideoTool(ctx, { maxVideoBytes: config.maxRequestVideoBytes })
   const registration = ctx.llm.registerAdapter([PROVIDER], adapter)
 
   const controller = new AbortController()

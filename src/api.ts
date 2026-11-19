@@ -9,7 +9,8 @@ import { ENDPOINTS } from './models.ts'
 import type { AntiGravityApi } from './models.ts'
 import { AntiGravityFailure, parseAntiGravityFailure } from './failure.ts'
 import type { AntiGravityTerminalReason } from './failure.ts'
-import { captureFailureReporter } from './failure-bridge.ts'
+import { captureFailureReporter, captureVideoRequestContext } from './failure-bridge.ts'
+import { DEFAULT_MAX_REQUEST_VIDEO_BYTES, injectInlineVideos, isVideoCapableGeminiModel, READ_VIDEO_TOOL_NAME } from './video.ts'
 
 export const MAX_SSE_EVENT_BYTES = 1024 * 1024
 export const MAX_INFERENCE_STREAM_BYTES = 16 * 1024 * 1024
@@ -128,9 +129,12 @@ function requestBody(model: Model<AntiGravityApi>, context: Context, options: St
   const thinkingConfig = defaultThinkingConfig(model)
   if (thinkingConfig !== undefined) generationConfig.thinkingConfig = thinkingConfig
   if (Object.keys(generationConfig).length > 0) request.generationConfig = generationConfig
-  if (tools.length) {
+  const visibleTools = isVideoCapableGeminiModel(model.id)
+    ? tools
+    : tools.filter(tool => tool.name !== READ_VIDEO_TOOL_NAME)
+  if (visibleTools.length) {
     const isLegacyClaude = model.id.startsWith('claude-sonnet-4-') || model.id.startsWith('claude-opus-4-')
-    request.tools = convertTools(tools, isLegacyClaude)
+    request.tools = convertTools(visibleTools, isLegacyClaude)
   }
   return { project: projectId, model: model.id, request, requestType: 'agent', userAgent: 'antigravity', requestId: `agent-${crypto.randomUUID()}`, enabledCreditTypes: [] }
 }
@@ -168,10 +172,27 @@ async function errorPayload(response: Response, signal: AbortSignal): Promise<un
     try { reader.releaseLock() } catch {}
   }
 }
-async function openResponse(model: Model<AntiGravityApi>, context: Context, options: StreamOptions, auth: AntiGravityAuth, signal: AbortSignal): Promise<Response> {
+async function openResponse(
+  model: Model<AntiGravityApi>,
+  context: Context,
+  options: StreamOptions,
+  auth: AntiGravityAuth,
+  signal: AbortSignal,
+  videoContext?: ReturnType<typeof captureVideoRequestContext>,
+): Promise<Response> {
   checkAbort(signal)
   const requestedModelId = model.id
   let payload = requestBody(model, context, options, auth.projectId)
+  const requestObj = record(record(payload)?.request)
+  if (requestObj && Array.isArray(requestObj.contents)) {
+    await injectInlineVideos(
+      requestObj.contents as Array<Record<string, unknown>>,
+      requestedModelId,
+      videoContext?.attachments,
+      videoContext?.maxRequestVideoBytes ?? DEFAULT_MAX_REQUEST_VIDEO_BYTES,
+      signal,
+    )
+  }
   const replacement = await hook(() => options.onPayload?.(payload, model), signal, 'payload-hook')
   checkAbort(signal)
   if (replacement !== undefined) payload = replacement
@@ -205,7 +226,7 @@ async function openResponse(model: Model<AntiGravityApi>, context: Context, opti
 
 /** Native event stream; iterator early-return also cancels its producer and settles result(). */
 export function streamAntiGravity(model: Model<AntiGravityApi>, context: Context, options: StreamOptions = {}): AssistantMessageEventStream {
-  const stream = createAssistantMessageEventStream(), reporter = captureFailureReporter()
+  const stream = createAssistantMessageEventStream(), reporter = captureFailureReporter(), videoContext = captureVideoRequestContext()
   const owned = new AbortController(), deadline = new AbortController()
   const signal = AbortSignal.any([owned.signal, deadline.signal, ...options.signal ? [options.signal] : []])
   let settled = false
@@ -236,7 +257,7 @@ export function streamAntiGravity(model: Model<AntiGravityApi>, context: Context
       const timeoutMs = options.timeoutMs ?? DEFAULT_INFERENCE_TIMEOUT_MS
       if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > MAX_TIMER_DELAY_MS) throw new AntiGravityFailure('INVALID_REQUEST', 'policy')
       timer = setTimeout(() => deadline.abort(), timeoutMs)
-      const response = await openResponse(model, context, options, parseAuth(options.apiKey), signal)
+      const response = await openResponse(model, context, options, parseAuth(options.apiKey), signal, videoContext)
       checkAbort(signal)
       if (response.body === null) throw new AntiGravityFailure('TRANSPORT', 'transport')
       reader = response.body.getReader()

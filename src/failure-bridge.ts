@@ -7,14 +7,25 @@ import type { AntiGravityFailureData } from './failure.ts'
 import type { AntiGravityUsageService } from './usage.ts'
 import { quotaResetFailure } from './quota-retry.ts'
 import type { ResolvedQuotaResetRetry } from './quota-retry.ts'
+import type { VideoAttachmentReader } from './video.ts'
+
+export interface VideoRequestContext {
+  readonly attachments?: VideoAttachmentReader
+  readonly maxRequestVideoBytes?: number
+}
 
 interface FailureContext {
   active: boolean
   failure?: Readonly<LlmFailure>
   failedAtMs?: number
   enriched?: boolean
+  video?: VideoRequestContext
 }
 const requestFailures = new AsyncLocalStorage<FailureContext>()
+
+export function captureVideoRequestContext(): VideoRequestContext | undefined {
+  return requestFailures.getStore()?.video
+}
 
 /**
  * Capture the request before starting the provider's asynchronous producer.
@@ -78,10 +89,11 @@ function requestStream(
   options: GenerateOptions,
   dispatch: (options: GenerateOptions) => AsyncIterable<StreamChunk>,
   recovery?: QuotaRecovery,
+  video?: VideoRequestContext,
 ): AsyncIterable<StreamChunk> {
   return {
     [Symbol.asyncIterator]() {
-      const context: FailureContext = { active: true }
+      const context: FailureContext = { active: true, ...video === undefined ? {} : { video } }
       const consumer = new AbortController()
       const signal = options.signal === undefined ? consumer.signal : AbortSignal.any([options.signal, consumer.signal])
       const request = { ...options, signal }
@@ -175,15 +187,32 @@ interface QuotaRecovery {
 
 export class AntiGravityAdapter extends PiAiAdapter {
   private quotaRecovery?: Omit<QuotaRecovery, 'model'>
+  private videoAttachments?: {
+    readonly resolve: () => VideoAttachmentReader | undefined
+    readonly maxRequestVideoBytes: number
+  }
 
   configureQuotaRecovery(usage: QuotaRecovery['usage'], config: ResolvedQuotaResetRetry): void {
     this.quotaRecovery = { usage, config }
   }
 
+  configureVideoAttachments(resolve: () => VideoAttachmentReader | undefined, maxRequestVideoBytes: number): void {
+    this.videoAttachments = { resolve, maxRequestVideoBytes }
+  }
+
+  private videoContext(): VideoRequestContext | undefined {
+    if (this.videoAttachments === undefined) return undefined
+    return {
+      attachments: this.videoAttachments.resolve(),
+      maxRequestVideoBytes: this.videoAttachments.maxRequestVideoBytes,
+    }
+  }
+
   override stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     return requestStream(options, request => super.stream(request),
       options.provider === 'google-antigravity' && this.quotaRecovery !== undefined
-        ? { ...this.quotaRecovery, model: options.model } : undefined)
+        ? { ...this.quotaRecovery, model: options.model } : undefined,
+      options.provider === 'google-antigravity' ? this.videoContext() : undefined)
   }
 
   override async prepareCall(provider: string, model: string, signal?: AbortSignal): Promise<PreparedAdapterCall> {
@@ -192,6 +221,7 @@ export class AntiGravityAdapter extends PiAiAdapter {
     // freeze. Keep the exact model descriptor and captured prepared dispatcher.
     const recovery = provider === 'google-antigravity' && this.quotaRecovery !== undefined
       ? { ...this.quotaRecovery, model: prepared.model.id } : undefined
-    return { ...prepared, stream: options => requestStream(options, request => prepared.stream(request), recovery) }
+    const video = provider === 'google-antigravity' ? this.videoContext() : undefined
+    return { ...prepared, stream: options => requestStream(options, request => prepared.stream(request), recovery, video) }
   }
 }
