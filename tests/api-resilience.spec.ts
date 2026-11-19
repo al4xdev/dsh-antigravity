@@ -86,6 +86,13 @@ for (const model of models) describe(`shared resilience ${model.id}`, () => {
     const { result } = await run(model, sse(event([{ text: 'ok' }], 'STOP')) + sse({ response: { usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 3, thoughtsTokenCount: 2, cachedContentTokenCount: 4, totalTokenCount: 15 } } }))
     expect(result.usage).toMatchObject({ input: 6, cacheRead: 4, output: 5, reasoning: 2, totalTokens: 15 })
   })
+  it('tolerates intermediate cachedContentTokenCount exceeding preliminary promptTokenCount before final STOP usage', async () => {
+    const { result } = await run(model, sse(event([{ functionCall: { id: 'call_1', name: 'bash', args: { command: 'ls' } }, thoughtSignature: 'YWJj' }], undefined, { promptTokenCount: 422784, candidatesTokenCount: 113, totalTokenCount: 425412, cachedContentTokenCount: 424572, thoughtsTokenCount: 2515 }))
+      + sse(event([{ text: '' }], 'STOP', { promptTokenCount: 426621, candidatesTokenCount: 119, totalTokenCount: 429255, cachedContentTokenCount: 424572, thoughtsTokenCount: 2515 })))
+    expect(result.stopReason).toBe('toolUse')
+    expect(result.usage).toMatchObject({ input: 2049, cacheRead: 424572, output: 2634, reasoning: 2515, totalTokens: 429255 })
+    expect(observed.failures).toHaveLength(0)
+  })
   it.each([sse(event([{ text: 'partial' }])), sse(event([{ text: 'partial' }])) + 'data: [DONE]\n\n', sse(event([{ text: 'partial' }])) + 'data: {"response":'])('fails incomplete streams, including [DONE] without terminal', async text => {
     const { result } = await run(model, text)
     expect(result.stopReason).toBe('error'); failure('TRANSPORT', true)
@@ -254,7 +261,7 @@ for (const model of models) describe(`shared resilience ${model.id}`, () => {
     for await (const item of stream) if (item.type === 'text_delta') break
     expect((await stream.result()).stopReason).toBe('aborted'); expect(cancelled).toBe(true); failure('ABORTED', true)
   })
-  it.each([{}, { response: { candidates: 'wrong' } }, event([{}], 'STOP'), event([{ text: 'ok' }], 'STOP', { promptTokenCount: null }), event([{ text: 1 }], 'STOP'), event([{ functionCall: { name: '', args: {} } }], 'STOP'), event([{ functionCall: { id: 'repeat', name: 'tool', args: {} } }, { functionCall: { id: 'repeat', name: 'tool', args: {} } }], 'STOP'), event([{ text: 'ok' }], 'STOP', { promptTokenCount: -1 }), event([{ text: 'ok' }], 'STOP', { promptTokenCount: 1, cachedContentTokenCount: 2 })])('fails malformed payload %j without raw text', async data => {
+  it.each([{}, { response: { candidates: 'wrong' } }, event([{}], 'STOP'), event([{ text: 'ok' }], 'STOP', { promptTokenCount: null }), event([{ text: 1 }], 'STOP'), event([{ functionCall: { name: '', args: {} } }], 'STOP'), event([{ functionCall: { id: 'repeat', name: 'tool', args: {} } }, { functionCall: { id: 'repeat', name: 'tool', args: {} } }], 'STOP'), event([{ text: 'ok' }], 'STOP', { promptTokenCount: -1 })])('fails malformed payload %j without raw text', async data => {
     await run(model, sse(data)); failure('PI_AI_ERROR')
   })
   it('network errors do not trigger fallback or leak raw details', async () => {

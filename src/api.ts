@@ -55,9 +55,13 @@ function parseAuth(value: string | undefined): AntiGravityAuth {
  * of truth — exactly one non-null level means one provider string to send.
  */
 function defaultThinkingConfig(model: { id: string, thinkingLevelMap?: Record<string, string | null> | null }): Record<string, unknown> | undefined {
-  const id = model.id
+  if (model.id.startsWith('gpt-oss-')) return { includeThoughts: true, thinkingBudget: 8192 }
   const mapped = Object.entries(model.thinkingLevelMap ?? {}).filter(([level, value]) => level !== 'off' && typeof value === 'string' && value.length > 0)
-  if (mapped.length === 1) return { includeThoughts: true, thinkingLevel: String(mapped[0][1]).toUpperCase() }
+  if (mapped.length === 1) {
+    const value = mapped[0][1]
+    // Cloud Code Assist serializes xhigh as numeric enum 100 on the wire (observed in agy 1.5.12).
+    return { includeThoughts: true, thinkingLevel: value === 'xhigh' ? 100 : String(value).toUpperCase() }
+  }
   return undefined
 }
 function cleanToolId(id: string): string {
@@ -123,6 +127,7 @@ function requestBody(model: Model<AntiGravityApi>, context: Context, options: St
   if (options.maxTokens !== undefined) generationConfig.maxOutputTokens = options.maxTokens
   const thinkingConfig = defaultThinkingConfig(model)
   if (thinkingConfig !== undefined) generationConfig.thinkingConfig = thinkingConfig
+  if (Object.keys(generationConfig).length > 0) request.generationConfig = generationConfig
   if (tools.length) {
     const isLegacyClaude = model.id.startsWith('claude-sonnet-4-') || model.id.startsWith('claude-opus-4-')
     request.tools = convertTools(tools, isLegacyClaude)
@@ -364,8 +369,8 @@ export function streamAntiGravity(model: Model<AntiGravityApi>, context: Context
           if (!usage) throw protocol()
           const counter = (key: string): number => { const value = usage[key] === undefined ? 0 : usage[key]; if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) throw protocol(); return value }
           const prompt = counter('promptTokenCount'), cached = counter('cachedContentTokenCount'), candidates = counter('candidatesTokenCount'), thoughts = counter('thoughtsTokenCount'), total = counter('totalTokenCount')
-          if (cached > prompt || !Number.isSafeInteger(candidates + thoughts)) throw protocol()
-          output.usage = { input: prompt - cached, output: candidates + thoughts, reasoning: thoughts, cacheRead: cached, cacheWrite: 0, totalTokens: total, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }
+          if (!Number.isSafeInteger(candidates + thoughts)) throw protocol()
+          output.usage = { input: Math.max(0, prompt - cached), output: candidates + thoughts, reasoning: thoughts, cacheRead: cached, cacheWrite: 0, totalTokens: total, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }
           if (model.cost) calculateCost(model, output.usage)
         }
       }
